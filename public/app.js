@@ -1355,6 +1355,7 @@ async function openSession(id) {
   await loadHistory(true)
   renderSessionCards()
   refreshSessions()
+  updateComposerChrome()
 }
 
 function closeSession() {
@@ -1364,6 +1365,7 @@ function closeSession() {
   document.body.classList.remove('in-session')
   hideComposerMenu()
   showView('view-home')
+  updateComposerChrome()
 }
 
 /* Android 手势返回/实体返回: 注册后系统不再直接杀 App, 由这里接管导航 */
@@ -3186,6 +3188,8 @@ const voiceState = {
   moved: 0,              // 上移位移
   finalText: '',         // 已收到的最终文本
   pendingCommit: false,  // 松手后等待 native 的 final 回调再提交
+  pressAt: 0,            // 按下时刻(识别浮层/弹窗打断手势的 touchcancel 防护用)
+  pointerId: null,       // 按住手势的 pointerId(setPointerCapture 后跟随)
   apiKeyPlain: ''        // 设置页密钥明文(失焦打码用)
 }
 const voiceHandlers = { partial: null, final: null, error: null }
@@ -3193,14 +3197,34 @@ let voiceSession = 0     // 每次开始识别自增, 防止旧会话回调误�
 let webkitRec = null
 
 function speechBridge() { return window.NativeSpeech || null }
-/** 返回 true(原生)/'webkit'(浏览器兜底)/false(不支持) */
+/** 返回 true(原生)/'webkit'(浏览器兜底)/false(不支持)。
+ *  原生桥存在即视为支持(部分 ROM 的 isRecognitionAvailable 误报 false, 但识别实际可用),
+ *  真正不可用时 start() 会以 error 回调反馈, 由 toast 提示。 */
 function voiceRecSupported() {
   const b = speechBridge()
-  if (b) {
-    try { return b.isAvailable ? !!b.isAvailable() : true } catch { return true }
-  }
+  if (b) return true
   if (window.SpeechRecognition || window.webkitSpeechRecognition) return 'webkit'
   return false
+}
+
+/** 点语音图标/进功能测试页时提前申请麦克风权限, 避免权限弹窗打断"按住说话"手势。 */
+function ensureVoicePermission() {
+  const b = speechBridge()
+  if (!b || typeof b.hasPermission !== 'function') return
+  try {
+    if (!b.hasPermission()) {
+      if (typeof b.requestPermission === 'function') b.requestPermission()
+      toast(t('voice.needMic'), '')
+    }
+  } catch {}
+}
+
+/** 手势/回调里取当前 Y(兼容 PointerEvent 与 TouchEvent)。 */
+function voicePointerY(e) {
+  if (!e) return 0
+  if (e.touches && e.touches[0]) return e.touches[0].clientY
+  if (typeof e.clientY === 'number') return e.clientY
+  return 0
 }
 
 /** 原生桥回传入口: {type:'partial'|'final'|'error', text, error} */
@@ -3213,6 +3237,7 @@ window.__speechBridge = (ev) => {
 
 function voiceErrorText(code) {
   if (code === 'permission' || code === '8') return t('voice.permissionDenied')
+  if (code === '9') return t('voice.permissionError')
   if (code === '5') return t('voice.speechTimeout')
   if (code === '6') return t('voice.noMatch')
   if (code === '7') return t('voice.busy')
@@ -3333,20 +3358,26 @@ function beginHoldTalk(e, target) {
   voiceState.recording = true
   voiceState.cancelled = false
   voiceState.target = target || 'composer'
-  voiceState.startY = (e && e.touches && e.touches[0]) ? e.touches[0].clientY : 0
+  voiceState.startY = voicePointerY(e)
   voiceState.moved = 0
   voiceState.finalText = ''
   voiceState.pendingCommit = false
+  voiceState.pressAt = Date.now()
   if (voiceState.target === 'composer') $('hold-talk-btn').classList.add('recording')
   else $('voice-test-hold').classList.add('recording')
   openVoiceOverlay()
   const ok = startVoiceRecognition({
     partial: (txt) => { if (voiceState.target === 'test') $('voice-test-raw').value = txt },
     final: (txt) => {
-      // 松手后 recording 已复位, 只认同一会话且未取消的 final
+      // 同一会话且未取消才处理; 识别结束即提交(即使 touchend 丢失/未松手), 避免卡住
       if (mySession !== voiceSession || voiceState.cancelled) return
-      voiceState.finalText = String(txt || '')
-      if (voiceState.pendingCommit) commitVoiceText(voiceState.finalText)
+      voiceState.recording = false
+      voiceState.finalText = ''
+      voiceState.pendingCommit = false
+      clearHoldTalkPressed()
+      closeVoiceOverlay()
+      stopVoiceRecognition()
+      commitVoiceText(String(txt || ''))
     },
     error: (code) => {
       if (mySession !== voiceSession || voiceState.cancelled) return
@@ -3371,34 +3402,32 @@ function beginHoldTalk(e, target) {
 /** 浮层 touchmove: 上移超阈值 → 取消态 */
 function moveHoldTalk(e) {
   if (!voiceState.recording) return
-  if (!e.touches || !e.touches[0]) return
-  voiceState.moved = (voiceState.startY || e.touches[0].clientY) - e.touches[0].clientY
+  const y = voicePointerY(e)
+  if (!y && y !== 0) return
+  voiceState.moved = (voiceState.startY || y) - y
   const cancel = voiceState.moved > VOICE_CANCEL_DIST
   $('voice-overlay').classList.toggle('cancel', cancel)
   $('voice-hint').textContent = cancel ? t('voice.hintCancel') : t('voice.hintNormal')
 }
 
-/** 松手: 超阈值=取消; 否则停止识别, 拿到最终文本后提交 */
+/** 松手: 超阈值=取消; 否则停止识别, 拿到最终文本后提交(final 回调到达时自动提交) */
 function endHoldTalk() {
   if (!voiceState.recording) return
   const cancel = voiceState.moved > VOICE_CANCEL_DIST
   voiceState.recording = false
+  voiceState.pendingCommit = false
   clearHoldTalkPressed()
   closeVoiceOverlay()
   if (cancel) {
     voiceState.cancelled = true
-    cancelVoiceRecognition()
-    voiceState.pendingCommit = false
     voiceState.finalText = ''
+    cancelVoiceRecognition()
     return
   }
   if (voiceState.finalText) {
     const text = voiceState.finalText
     voiceState.finalText = ''
-    voiceState.pendingCommit = false
     commitVoiceText(text)
-  } else {
-    voiceState.pendingCommit = true // native 的 final 回调异步到达后提交
   }
   stopVoiceRecognition()
 }
@@ -3412,6 +3441,36 @@ function cancelHoldTalk() {
   clearHoldTalkPressed()
   closeVoiceOverlay()
   cancelVoiceRecognition()
+}
+
+/* ---- 按住说话手势(Pointer Events + setPointerCapture):
+ *      浮层弹出后手指事件仍回到按住按钮, 不依赖浮层自身收事件,
+ *      也避免"弹窗/浮层打断手势→瞬间自己取消"。 ---- */
+function bindHoldPointer(el, target) {
+  if (!el) return
+  el.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch') return
+    e.preventDefault()
+    beginHoldTalk(e, target)
+    voiceState.pointerId = e.pointerId
+    try { el.setPointerCapture(e.pointerId) } catch {}
+  })
+  el.addEventListener('pointermove', (e) => {
+    if (!voiceState.recording || voiceState.pointerId !== e.pointerId) return
+    e.preventDefault()
+    moveHoldTalk(e)
+  })
+  el.addEventListener('pointerup', (e) => {
+    if (voiceState.pointerId !== e.pointerId) return
+    voiceState.pointerId = null
+    endHoldTalk()
+  })
+  el.addEventListener('pointercancel', (e) => {
+    if (voiceState.pointerId !== e.pointerId) return
+    voiceState.pointerId = null
+    // 浮层刚弹出(<300ms)即被取消, 多为系统弹窗/浮层覆盖插入打断手势, 忽略并交给识别回调兜底
+    if (Date.now() - (voiceState.pressAt || 0) > 300) cancelHoldTalk()
+  })
 }
 
 /** 识别最终文本落点: 功能测试页→上半框; 会话输入框→(转换模式先调 API) */
@@ -3465,14 +3524,18 @@ function setHoldTalk(on) {
   if (!c) return
   c.classList.toggle('hold-talk', on)
   $('hold-talk-btn').classList.toggle('hidden', !on)
-  $('voice-ico-kbd').classList.toggle('hidden', !on)
-  $('voice-ico-mic').classList.toggle('hidden', on)
+  renderVoiceKbdBtn(on)
   if (on) { try { $('composer-input').blur() } catch {} }
   if (!on) updateComposerChrome()
 }
 
 function renderVoiceBtn(show) {
   $('btn-voice').classList.toggle('hidden', !show)
+}
+
+function renderVoiceKbdBtn(show) {
+  const b = $('btn-voice-kbd')
+  if (b) b.classList.toggle('hidden', !show)
 }
 
 function updateComposerChrome() {
@@ -3482,10 +3545,13 @@ function updateComposerChrome() {
   const inHold = $('composer').classList.contains('hold-talk')
   const supported = voiceRecSupported()
   const fs = composerFsActive()
-  // 按住说话态: 恒显示(键盘图标); 否则: 仅移动端 + 支持 + 无文本
-  renderVoiceBtn(inHold ? true : !!(isMobileDevice() && supported && !text))
-  // 全屏按钮: 全屏态常显; 普通态超过 5 行显示
+  // 按住说话态: 显示键盘图标; 否则: 仅移动端 + 支持 + 无文本时显示输入框内声波图标
+  const voiceVisible = !!(!inHold && isMobileDevice() && supported && !text)
+  renderVoiceBtn(voiceVisible)
+  renderVoiceKbdBtn(inHold)
   const wrap = $('composer-input-wrap')
+  wrap.classList.toggle('has-voice-btn', voiceVisible)
+  // 全屏按钮: 全屏态常显; 普通态超过 5 行显示
   const showFs = fs || composerLines(input) > 5
   $('btn-fs-toggle').classList.toggle('hidden', !showFs)
   wrap.classList.toggle('has-fs-btn', showFs)
@@ -3603,6 +3669,7 @@ async function runVoiceConnTest() {
 }
 
 function openVoiceTest() {
+  ensureVoicePermission() // 提前申请麦克风权限, 避免按住说话被权限弹窗打断
   $('voice-test-page').classList.remove('hidden')
   $('voice-test-raw').value = ''
   $('voice-test-out').value = ''
@@ -4221,18 +4288,13 @@ function bindUi() {
 
   // ---- 语音输入: 图标切换 / 按住说话 / 浮层 ----
   $('btn-voice').addEventListener('click', () => {
-    if ($('composer').classList.contains('hold-talk')) setHoldTalk(false)
-    else setHoldTalk(true)
+    if ($('composer').classList.contains('hold-talk')) { setHoldTalk(false); return }
+    ensureVoicePermission() // 提前申请麦克风权限, 避免弹窗打断接下来的按住手势
+    setHoldTalk(true)
   })
-  $('hold-talk-btn').addEventListener('touchstart', (e) => { e.preventDefault(); beginHoldTalk(e, 'composer') }, { passive: false })
-  const voiceOv = $('voice-overlay')
-  voiceOv.addEventListener('touchmove', (e) => {
-    if (!voiceState.recording) return
-    e.preventDefault()
-    moveHoldTalk(e)
-  }, { passive: false })
-  voiceOv.addEventListener('touchend', (e) => { if (voiceState.recording) { e.preventDefault(); endHoldTalk() } }, { passive: false })
-  voiceOv.addEventListener('touchcancel', () => { if (voiceState.recording) cancelHoldTalk() }, { passive: false })
+  $('btn-voice-kbd').addEventListener('click', () => setHoldTalk(false))
+  bindHoldPointer($('hold-talk-btn'), 'composer')
+  bindHoldPointer($('voice-test-hold'), 'test')
 
   // ---- 输入框全屏 ----
   $('btn-fs-toggle').addEventListener('click', () => setComposerFs(!composerFsActive()))
@@ -4241,7 +4303,6 @@ function bindUi() {
   // ---- 设置: 语音输入 ----
   $('voice-settings-entry').addEventListener('click', showVoiceSettingsPage)
   $('voice-test-exit').addEventListener('click', closeVoiceTest)
-  $('voice-test-hold').addEventListener('touchstart', (e) => { e.preventDefault(); beginHoldTalk(e, 'test') }, { passive: false })
   $('voice-test-convert').addEventListener('click', async () => {
     const raw = String($('voice-test-raw').value || '').trim()
     if (!raw) { toast(t('voice.testEmpty'), 'err'); return }

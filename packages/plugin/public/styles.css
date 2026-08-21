@@ -470,15 +470,32 @@ body.in-session .main { padding-bottom: 84px; }
 }
 .hold-talk-btn:active, .hold-talk-btn.recording { background: var(--dsr-info); color: var(--dsr-on-accent); }
 
-/* 语音图标按钮(圆形, 声波波纹) */
-.voice-btn {
+/* 语音图标按钮(圆形外框, 声波波纹) — 位于输入框内部最右侧 */
+.composer-input-wrap .voice-btn {
+  position: absolute; right: 7px; bottom: 6px; z-index: 2;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--dsr-panel); color: var(--dsr-info);
+  border: 1px solid var(--dsr-info-line);
+  display: grid; place-items: center;
+  padding: 0;
+}
+.composer-input-wrap .voice-btn:active { background: var(--dsr-info-soft); }
+.composer-input-wrap .voice-btn svg { width: 19px; height: 19px; }
+
+/* 按住说话态: 右侧键盘图标按钮(圆形外框, 2行3列圆点+底部一横) */
+.voice-btn-kbd {
   flex-shrink: 0; width: 42px; height: 42px; border-radius: 50%;
   background: var(--dsr-panel); color: var(--dsr-info);
   border: 1px solid var(--dsr-info-line);
   display: grid; place-items: center;
+  padding: 0;
 }
-.voice-btn:active { background: var(--dsr-info-soft); }
-.voice-btn svg { width: 21px; height: 21px; }
+.voice-btn-kbd:active { background: var(--dsr-info-soft); }
+.voice-btn-kbd svg { width: 21px; height: 21px; }
+
+/* 输入框内部有图标时给文本让出右内边距 */
+.composer-input-wrap.has-voice-btn textarea { padding-right: 46px; }
+.composer-input-wrap.has-voice-btn.has-fs-btn textarea { padding-right: 84px; }
 
 /* hold-talk 态: 隐藏输入框/发送/加号 */
 .composer.hold-talk .composer-input-wrap,
@@ -504,7 +521,9 @@ body.in-session .main { padding-bottom: 84px; }
   height: 100%; max-height: none; resize: none;
 }
 .composer-wrap.fs .send-btn { height: 48px; margin: auto 0; }
-.composer-wrap.fs .voice-btn { margin: auto 0; }
+.composer-wrap.fs .voice-btn { right: 10px; bottom: 10px; width: 38px; height: 38px; }
+.composer-wrap.fs .voice-btn svg { width: 21px; height: 21px; }
+.composer-wrap.fs .voice-btn-kbd { height: 48px; width: 48px; margin: auto 0; }
 .composer-wrap.fs .hold-talk-btn { height: 52px; font-size: 15px; margin: auto 0; }
 .composer-wrap.fs .composer-fs-btn { top: 8px; right: 10px; width: 30px; height: 30px; }
 

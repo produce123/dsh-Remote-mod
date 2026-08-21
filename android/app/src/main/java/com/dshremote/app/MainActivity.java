@@ -247,8 +247,13 @@ public class MainActivity extends BridgeActivity {
    *  JS 侧 window.NativeSpeech.start()/stop()/cancel(), 回调经 evaluateJavascript 走
    *  window.__speechBridge({type:'partial'|'final'|'error', text, error})。 */
   private class SpeechBridge {
+    private static final int ERROR_INSUFFICIENT_PERMISSIONS = 9;
     private SpeechRecognizer recognizer;
     private boolean active = false;
+    // JS 会话是否仍想识别: start() 置 true, stop()/cancel() 置 false。
+    // 授权回调后只有 pendingStart 仍为 true 才真正启动, 避免"按一下松手后授权回来才识别"的孤儿会话。
+    private boolean pendingStart = false;
+    private boolean retriedError9 = false;
 
     @JavascriptInterface
     public boolean isAvailable() {
@@ -259,14 +264,34 @@ public class MainActivity extends BridgeActivity {
       }
     }
 
-    /** 开始识别。首次调用先申请 RECORD_AUDIO 运行时权限, 授权回调后真正 start。 */
+    @JavascriptInterface
+    public boolean hasPermission() {
+      try {
+        return Build.VERSION.SDK_INT < 23
+            || ActivityCompat.checkSelfPermission(MainActivity.this, android.Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED;
+      } catch (Throwable t) {
+        return false;
+      }
+    }
+
+    /** 仅申请麦克风权限(不启动识别), 供 JS 在点语音图标/进功能测试页时提前申请, 避免打断按住手势。 */
+    @JavascriptInterface
+    public void requestPermission() {
+      main.post(() -> {
+        if (hasPermission()) return;
+        ActivityCompat.requestPermissions(MainActivity.this,
+            new String[]{android.Manifest.permission.RECORD_AUDIO}, SPEECH_PERMISSION_REQ);
+      });
+    }
+
+    /** 开始识别。权限未授予时先弹授权框, 授权回调后若会话仍有效(pendingStart)才真正 start。 */
     @JavascriptInterface
     public void start() {
       main.post(() -> {
         if (active) return;
-        if (Build.VERSION.SDK_INT >= 23
-            && ActivityCompat.checkSelfPermission(MainActivity.this, android.Manifest.permission.RECORD_AUDIO)
-                != PackageManager.PERMISSION_GRANTED) {
+        pendingStart = true;
+        if (!hasPermission()) {
           ActivityCompat.requestPermissions(MainActivity.this,
               new String[]{android.Manifest.permission.RECORD_AUDIO}, SPEECH_PERMISSION_REQ);
           return;
@@ -276,13 +301,17 @@ public class MainActivity extends BridgeActivity {
     }
 
     void onPermissionResult(boolean granted) {
-      if (granted) startRecognizer();
-      else sendEvent("error", "", "permission");
+      if (granted) {
+        if (pendingStart) startRecognizer();
+      } else {
+        sendEvent("error", "", "permission");
+      }
     }
 
     /** 松手结束: 停止监听, onResults 会回调最终文本。 */
     @JavascriptInterface
     public void stop() {
+      pendingStart = false;
       main.post(() -> {
         if (recognizer == null) return;
         try {
@@ -297,6 +326,7 @@ public class MainActivity extends BridgeActivity {
     /** 上移取消: 直接取消, 不产生结果回调。 */
     @JavascriptInterface
     public void cancel() {
+      pendingStart = false;
       main.post(() -> {
         try {
           if (recognizer != null) recognizer.cancel();
@@ -308,8 +338,16 @@ public class MainActivity extends BridgeActivity {
 
     private void startRecognizer() {
       destroyRecognizer();
+      retriedError9 = false;
       try {
-        recognizer = SpeechRecognizer.createSpeechRecognizer(MainActivity.this);
+        SpeechRecognizer rec;
+        if (Build.VERSION.SDK_INT >= 31 && SpeechRecognizer.isOnDeviceRecognitionAvailable(MainActivity.this)) {
+          // 优先离线识别: 不依赖网络服务, 多数 ROM 更稳定
+          rec = SpeechRecognizer.createOnDeviceSpeechRecognizer(MainActivity.this);
+        } else {
+          rec = SpeechRecognizer.createSpeechRecognizer(MainActivity.this);
+        }
+        recognizer = rec;
         recognizer.setRecognitionListener(new RecognitionListener() {
           @Override public void onReadyForSpeech(Bundle params) {}
           @Override public void onBeginningOfSpeech() {}
@@ -318,8 +356,16 @@ public class MainActivity extends BridgeActivity {
           @Override public void onEndOfSpeech() {}
           @Override public void onError(int error) {
             active = false;
-            sendEvent("error", "", String.valueOf(error));
             destroyRecognizer();
+            // 部分 ROM 首次调用会误报 ERROR_INSUFFICIENT_PERMISSIONS, 会话仍有效时重试一次
+            if (error == ERROR_INSUFFICIENT_PERMISSIONS && pendingStart && !retriedError9) {
+              retriedError9 = true;
+              main.postDelayed(() -> {
+                if (pendingStart && !active) startRecognizer();
+              }, 300);
+              return;
+            }
+            sendEvent("error", "", String.valueOf(error));
           }
           @Override public void onResults(Bundle results) {
             active = false;

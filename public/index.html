@@ -141,13 +141,15 @@
               <svg id="fs-ico-expand" class="fs-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 3H3v6M15 21h6v-6M9 21H3v-6"/></svg>
               <svg id="fs-ico-collapse" class="fs-ico hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3v6h6M9 3v6H3M15 21v-6h6M9 21v-6H3"/></svg>
             </button>
+            <button id="btn-voice" class="voice-btn hidden" type="button" data-i18n-title="voice.voiceInput" data-i18n-aria="voice.voiceInput">
+              <svg id="voice-ico-mic" class="voice-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><line x1="4.5" y1="12" x2="19.5" y2="12"/><line x1="7.6" y1="8.2" x2="16.4" y2="8.2"/><line x1="7.6" y1="15.8" x2="16.4" y2="15.8"/></svg>
+            </button>
           </div>
           <button id="hold-talk-btn" class="hold-talk-btn hidden" type="button" data-i18n="voice.holdToTalk">按住说话</button>
-          <button id="btn-send" class="send-btn" data-i18n="composer.send">发送</button>
-          <button id="btn-voice" class="voice-btn hidden" type="button" data-i18n-title="voice.voiceInput" data-i18n-aria="voice.voiceInput">
-            <svg id="voice-ico-mic" class="voice-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><line x1="4.5" y1="12" x2="19.5" y2="12"/><line x1="7.6" y1="8.2" x2="16.4" y2="8.2"/><line x1="7.6" y1="15.8" x2="16.4" y2="15.8"/></svg>
-            <svg id="voice-ico-kbd" class="voice-ico hidden" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="7.5" cy="9" r="1.5"/><circle cx="12" cy="9" r="1.5"/><circle cx="16.5" cy="9" r="1.5"/><circle cx="7.5" cy="13.6" r="1.5"/><circle cx="12" cy="13.6" r="1.5"/><circle cx="16.5" cy="13.6" r="1.5"/><rect x="5.2" y="17.4" width="13.6" height="1.8" rx="0.9"/></svg>
+          <button id="btn-voice-kbd" class="voice-btn-kbd hidden" type="button" data-i18n-title="voice.kbdInput" data-i18n-aria="voice.kbdInput">
+            <svg class="voice-ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="7.5" cy="9" r="1.5"/><circle cx="12" cy="9" r="1.5"/><circle cx="16.5" cy="9" r="1.5"/><circle cx="7.5" cy="13.6" r="1.5"/><circle cx="12" cy="13.6" r="1.5"/><circle cx="16.5" cy="13.6" r="1.5"/><rect x="5.2" y="17.4" width="13.6" height="1.8" rx="0.9"/></svg>
           </button>
+          <button id="btn-send" class="send-btn" data-i18n="composer.send">发送</button>
         </div>
       </div>
     </section>
@@ -897,6 +899,9 @@
         'voice.fullscreen': '全屏', 'voice.exitFullscreen': '退出全屏',
         'voice.recognitionError': '识别出错（{code}）', 'voice.noMatch': '没有听清，请重试',
         'voice.speechTimeout': '没有检测到说话', 'voice.permissionDenied': '麦克风权限被拒绝',
+        'voice.permissionError': '麦克风权限异常或系统语音服务不可用，请在系统设置中允许麦克风权限后重试',
+        'voice.needMic': '需要麦克风权限，请在弹窗中允许',
+        'voice.kbdInput': '切换到键盘输入',
         'voice.busy': '识别器正忙，请稍后再试', 'voice.testEmpty': '请先按住说话输入内容'
       },
       en: {
@@ -1115,6 +1120,9 @@
         'voice.fullscreen': 'Fullscreen', 'voice.exitFullscreen': 'Exit fullscreen',
         'voice.recognitionError': 'Recognition error ({code})', 'voice.noMatch': 'Did not catch that, try again',
         'voice.speechTimeout': 'No speech detected', 'voice.permissionDenied': 'Microphone permission denied',
+        'voice.permissionError': 'Microphone permission issue or speech service unavailable — check system settings and retry',
+        'voice.needMic': 'Microphone permission required — allow it in the dialog',
+        'voice.kbdInput': 'Switch to keyboard input',
         'voice.busy': 'Recognizer busy, try again shortly', 'voice.testEmpty': 'Hold to talk and speak first'
       }
     }
