@@ -1135,8 +1135,13 @@ function renderSessions() {
   const wbIds = new Set()
   if (state.wb.bound && state.wb.projects) for (const w of state.wb.projects) for (const id of (w.sessionIds || [])) wbIds.add(id)
   const root = state.wb.bound ? state.wb.path : ''
-  const visible = allItems.filter(s => !(state.wb.bound && (wbIds.has(s.sessionId) || wbStrictInside(s.cwd, root))))
   const archivedSet = new Set(state.archivedIds || [])
+  // 工作台会话: 未归档的收进工作台面板(扁平列表隐藏), 已归档的放行到扁平列表归档折叠区
+  const visible = allItems.filter(s => {
+    if (!state.wb.bound) return true
+    if (archivedSet.has(s.sessionId)) return true
+    return !(wbIds.has(s.sessionId) || wbStrictInside(s.cwd, root))
+  })
   const archived = visible.filter(s => archivedSet.has(s.sessionId))
   const main = visible.filter(s => !archivedSet.has(s.sessionId))
   const showArchived = LS.get('dsShowArchivedV1', '0') === '1'
@@ -1168,10 +1173,8 @@ function renderSessions() {
   $('mobile-session-list').classList.toggle('workspace-sorted', state.sessionSort === 'workspace')
   const sort = $('session-sort')
   if (sort) sort.value = state.sessionSort
-  document.querySelectorAll('[data-archived-toggle]').forEach(b => b.addEventListener('click', () => {
-    LS.set('dsShowArchivedV1', LS.get('dsShowArchivedV1', '0') === '1' ? '0' : '1')
-    renderSessions()
-  }))
+  // 归档折叠按钮不再直接绑定: 统一走 bindUi 里 session-list / mobile-session-list 的委托,
+  // 避免与委托重复触发导致状态切换两次、"点击无效"。
   document.querySelectorAll('[data-id]').forEach(b => b.addEventListener('click', () => openSession(b.dataset.id)))
   renderWorkbench()
 }
@@ -1679,20 +1682,26 @@ async function refreshWorkbench({ silent = false } = {}) {
   state.wb.path = wb.path || ''
   state.wb.title = wb.title || ''
   if (!wl) { state.wb.projects = []; renderWorkbench(); renderSessions(); return }
-  const items = Array.isArray(wl.items) ? wl.items.slice() : []
+  let items = Array.isArray(wl.items) ? wl.items.slice() : []
   try {
     const listRes = await fetch(fsApiUrl('/list', { path: state.wb.path }), { headers: fsHeaders() })
     if (listRes.ok) {
       const listData = await listRes.json().catch(() => ({}))
-      const have = new Set(items.map(w => wbPathKey(w.path)))
-      for (const entry of listData.entries || []) {
-        if (entry.type !== 'dir') continue
-        const projectPath = wbJoin(state.wb.path, entry.name)
-        if (have.has(wbPathKey(projectPath))) continue
-        try {
-          const created = await rpc('workspace.create', { path: projectPath })
-          if (created?.workspace) { items.push(created.workspace); have.add(wbPathKey(projectPath)) }
-        } catch {}
+      if (Array.isArray(listData.entries)) {
+        const entries = listData.entries
+        // 本地目录删除同步: 只保留工作台根目录下磁盘上实际存在的项目目录
+        const diskDirs = new Set(entries.filter(e => e.type === 'dir').map(e => wbPathKey(wbJoin(state.wb.path, e.name))))
+        items = items.filter(w => diskDirs.has(wbPathKey(w.path)))
+        const have = new Set(items.map(w => wbPathKey(w.path)))
+        for (const entry of entries) {
+          if (entry.type !== 'dir') continue
+          const projectPath = wbJoin(state.wb.path, entry.name)
+          if (have.has(wbPathKey(projectPath))) continue
+          try {
+            const created = await rpc('workspace.create', { path: projectPath })
+            if (created?.workspace) { items.push(created.workspace); have.add(wbPathKey(projectPath)) }
+          } catch {}
+        }
       }
     }
   } catch {}
@@ -1723,10 +1732,11 @@ function renderWorkbench() {
   panel.classList.toggle('hidden', !state.wb.expanded)
   if (!state.wb.expanded) return
   const projects = state.wb.projects || []
+  const archivedSet = new Set(state.archivedIds || [])
   let html = `<div class="ds-wb-panel-title">${esc(t('wb.projects'))}</div>`
   html += projects.length ? projects.map(w => {
     const id = String(w.workspaceId || '')
-    const sessions = (w.sessionIds || []).map(sid => state.byId.get(sid)).filter(Boolean).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    const sessions = (w.sessionIds || []).map(sid => state.byId.get(sid)).filter(Boolean).filter(s => !archivedSet.has(s.sessionId)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
     const open = state.wb.open === id
     return `<div class="ds-wb-project ${open ? 'open' : ''}">
       <button type="button" class="ds-wb-project-head" data-wb-head="${esc(id)}">
@@ -1747,7 +1757,8 @@ function renderWorkbench() {
     renderWorkbench()
   }))
   panel.querySelectorAll('[data-wb-new]').forEach(button => button.addEventListener('click', async () => {
-    const value = await safeRpc('session.create', { workspaceId: button.dataset.wbNew }, '')
+    // session.create 失败时 safeRpc 会 toast 错误提示, 不再静默
+    const value = await safeRpc('session.create', { workspaceId: button.dataset.wbNew }, t('wb.newSessionFailed'))
     if (value?.sessionId) { await refreshSessions(); openSession(value.sessionId) }
   }))
   panel.querySelectorAll('[data-wb-session]').forEach(button => button.addEventListener('click', () => openSession(button.dataset.wbSession)))
@@ -1991,7 +2002,7 @@ function bindUi() {
     list.style.display = list.style.display === 'none' ? 'flex' : 'none'
   })
   document.querySelectorAll('.ds-nav-item').forEach(b => b.addEventListener('click', () => showView(b.dataset.view)))
-  $('session-list').addEventListener('click', (e) => {
+  const onSessionListClick = (e) => {
     if (e.target.closest('[data-archived-toggle]')) {
       LS.set('dsShowArchivedV1', LS.get('dsShowArchivedV1', '0') === '1' ? '0' : '1')
       renderSessions()
@@ -1999,7 +2010,10 @@ function bindUi() {
     }
     const item = e.target.closest('[data-id]')
     if (item) openSession(item.dataset.id)
-  })
+  }
+  $('session-list').addEventListener('click', onSessionListClick)
+  // 窄屏回退布局(mobile-session-list)填充同样的 HTML, 需同一套委托, 否则归档折叠按钮在移动布局里也点不动
+  $('mobile-session-list').addEventListener('click', onSessionListClick)
   $('btn-wb-bind').addEventListener('click', openWorkbenchModal)
   $('btn-wb-bind-manual').addEventListener('click', () => bindWorkbench($('wb-path-input').value))
   $('wb-path-input').addEventListener('keydown', e => {

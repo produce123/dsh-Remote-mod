@@ -1174,6 +1174,30 @@ async function refreshWorkbench() {
     state.wbProjects = []
     state.wbArchived = []
   }
+  // 工作台本地目录删除同步: 以磁盘实际目录为准过滤项目, 并把磁盘上新增目录补进 workspace.list
+  if (state.wb?.bound && state.wb.path) {
+    try {
+      const listRes = await fetch(fsApiUrl('/list', { path: state.wb.path }), { headers: fsHeaders() })
+      if (listRes.ok) {
+        const listData = await listRes.json().catch(() => ({}))
+        if (Array.isArray(listData.entries)) {
+          const entries = listData.entries
+          const diskDirs = new Set(entries.filter(e => e.type === 'dir').map(e => wbPathKey(wbJoin(state.wb.path, e.name))))
+          state.wbProjects = state.wbProjects.filter(w => diskDirs.has(wbPathKey(w.path)))
+          const have = new Set(state.wbProjects.map(w => wbPathKey(w.path)))
+          for (const entry of entries) {
+            if (entry.type !== 'dir') continue
+            const projectPath = wbJoin(state.wb.path, entry.name)
+            if (have.has(wbPathKey(projectPath))) continue
+            try {
+              const created = await rpc('workspace.create', { path: projectPath })
+              if (created?.workspace) { state.wbProjects.push(created.workspace); have.add(wbPathKey(projectPath)) }
+            } catch {}
+          }
+        }
+      }
+    } catch {}
+  }
   renderWorkbench()
   renderSessions()
 }
@@ -1201,15 +1225,19 @@ function renderWorkbench() {
     panel.innerHTML = `<div class="wb-empty">${esc(t('wb.noProjects'))}</div>`
     return
   }
+  const archivedSet = new Set(state.wbArchived || [])
   panel.innerHTML = projects.map(w => {
     const id = String(w.workspaceId || '')
     const open = !!state.wbOpenProjects[id]
-    const sessions = (w.sessionIds || []).map(sid => state.byId.get(sid)).filter(Boolean)
+    const sessions = (w.sessionIds || []).map(sid => state.byId.get(sid)).filter(Boolean).filter(s => !archivedSet.has(s.sessionId))
     const body = open ? `<div class="wb-sessions">${sessions.length ? sessions.map(s => `
-      <button class="wb-session" type="button" data-wb-session="${esc(s.sessionId)}">
-        <span class="wb-session-title">${esc(titleOf(s))}</span>
-        <span class="wb-session-meta">${s.running ? esc(t('sessions.running')) : esc(fmtTime(s.updatedAt))}</span>
-      </button>`).join('') : `<div class="wb-empty">${esc(t('wb.noSessions'))}</div>`}</div>` : ''
+      <div class="session-swipe" data-session-swipe data-id="${esc(s.sessionId)}">
+        <button class="wb-session" type="button" data-wb-session="${esc(s.sessionId)}">
+          <span class="wb-session-title">${esc(titleOf(s))}</span>
+          <span class="wb-session-meta">${s.running ? esc(t('sessions.running')) : esc(fmtTime(s.updatedAt))}</span>
+        </button>
+        <button type="button" class="sc-archive-btn" data-archive-session="${esc(s.sessionId)}">${esc(t('session.archive'))}</button>
+      </div>`).join('') : `<div class="wb-empty">${esc(t('wb.noSessions'))}</div>`}</div>` : ''
     return `<div class="wb-project ${open ? 'open' : ''}" data-wb-project="${esc(id)}">
       <div class="wb-project-head">
         <span class="wb-chevron" aria-hidden="true">${open ? '▾' : '▸'}</span>
@@ -1250,8 +1278,13 @@ function renderSessions() {
   const wbIds = new Set()
   if (state.wb?.bound) for (const w of state.wbProjects) for (const id of (w.sessionIds || [])) wbIds.add(id)
   const root = workbenchRoot()
-  const visible = allItems.filter(s => !(state.wb?.bound && (wbIds.has(s.sessionId) || wbStrictInside(s.cwd, root))))
   const archivedSet = new Set(state.wbArchived || [])
+  // 工作台会话: 未归档的收进工作台面板(扁平列表隐藏), 已归档的放行到扁平列表归档折叠区
+  const visible = allItems.filter(s => {
+    if (!state.wb?.bound) return true
+    if (archivedSet.has(s.sessionId)) return true
+    return !(wbIds.has(s.sessionId) || wbStrictInside(s.cwd, root))
+  })
   const archived = visible.filter(s => archivedSet.has(s.sessionId))
   const main = visible.filter(s => !archivedSet.has(s.sessionId))
   const showArchived = LS.get('showArchivedV1', '0') === '1'
@@ -1325,6 +1358,7 @@ async function openSession(id) {
 }
 
 function closeSession() {
+  exitComposerExtras()
   state.current = null
   state.history = emptyHistory()
   document.body.classList.remove('in-session')
@@ -1337,6 +1371,9 @@ function bindNativeBack() {
   if (!CAP?.isNativePlatform?.()) return
   try {
     CAP.Plugins?.App?.addListener?.('backButton', () => {
+      if (!$('voice-overlay').classList.contains('hidden')) { cancelHoldTalk(); return }  // 按住说话浮层 → 取消
+      if (!$('voice-test-page').classList.contains('hidden')) { closeVoiceTest(); return } // 功能测试页 → 退出
+      if ($('composer-wrap')?.classList.contains('fs')) { setComposerFs(false); return }    // 全屏输入 → 退出全屏
       const openModal = [...document.querySelectorAll('.modal')].find(m => !m.classList.contains('hidden'))
       if (openModal) { if (openModal.id === 'modal-notes') closeNotesModal(); else if (openModal.id === 'modal-archive') closeArchiveConfirm(); else openModal.classList.add('hidden'); return }   // 先关弹窗
       if (document.body.classList.contains('in-session')) { closeSession(); return } // 会话页 → 回主页
@@ -2031,51 +2068,53 @@ async function confirmArchiveSession() {
 let swipeTracking = null
 let swipeSuppressClickUntil = 0
 function closeRevealedSwipes(except = null) {
-  document.querySelectorAll('#session-list .session-swipe.revealed').forEach(row => {
+  document.querySelectorAll('.session-swipe.revealed').forEach(row => {
     if (row !== except) row.classList.remove('revealed')
   })
 }
 function bindSessionSwipe() {
-  const list = $('session-list')
-  list.addEventListener('touchstart', e => {
-    if (e.touches.length !== 1) return
-    const row = e.target.closest('[data-session-swipe]')
-    if (!row) return
-    closeRevealedSwipes(row)
-    const touch = e.touches[0]
-    swipeTracking = {
-      row,
-      startX: touch.clientX,
-      startY: touch.clientY,
-      offset: row.classList.contains('revealed') ? -92 : 0,
-      axis: null
-    }
-  }, { passive: true })
-  list.addEventListener('touchmove', e => {
-    if (!swipeTracking || e.touches.length !== 1) return
-    const touch = e.touches[0]
-    const dx = touch.clientX - swipeTracking.startX
-    const dy = touch.clientY - swipeTracking.startY
-    if (!swipeTracking.axis && Math.max(Math.abs(dx), Math.abs(dy)) >= 8) {
-      swipeTracking.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'
-    }
-    if (swipeTracking.axis !== 'x') return
-    e.preventDefault()
-    const offset = Math.max(-92, Math.min(0, swipeTracking.offset + dx))
-    swipeTracking.row.style.setProperty('--swipe-x', offset + 'px')
-  }, { passive: false })
-  list.addEventListener('touchend', () => {
-    if (!swipeTracking) return
-    if (swipeTracking.axis === 'x') {
-      const row = swipeTracking.row
-      const offset = parseFloat(row.style.getPropertyValue('--swipe-x') || swipeTracking.offset)
-      row.classList.toggle('revealed', offset <= -46)
-      row.style.removeProperty('--swipe-x')
-      swipeSuppressClickUntil = Date.now() + 350
-    }
-    swipeTracking = null
-  }, { passive: true })
-  list.addEventListener('touchcancel', () => { swipeTracking = null }, { passive: true })
+  const containers = [$('session-list'), $('wb-panel')].filter(Boolean)
+  for (const list of containers) {
+    list.addEventListener('touchstart', e => {
+      if (e.touches.length !== 1) return
+      const row = e.target.closest('[data-session-swipe]')
+      if (!row) return
+      closeRevealedSwipes(row)
+      const touch = e.touches[0]
+      swipeTracking = {
+        row,
+        startX: touch.clientX,
+        startY: touch.clientY,
+        offset: row.classList.contains('revealed') ? -92 : 0,
+        axis: null
+      }
+    }, { passive: true })
+    list.addEventListener('touchmove', e => {
+      if (!swipeTracking || e.touches.length !== 1) return
+      const touch = e.touches[0]
+      const dx = touch.clientX - swipeTracking.startX
+      const dy = touch.clientY - swipeTracking.startY
+      if (!swipeTracking.axis && Math.max(Math.abs(dx), Math.abs(dy)) >= 8) {
+        swipeTracking.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'
+      }
+      if (swipeTracking.axis !== 'x') return
+      e.preventDefault()
+      const offset = Math.max(-92, Math.min(0, swipeTracking.offset + dx))
+      swipeTracking.row.style.setProperty('--swipe-x', offset + 'px')
+    }, { passive: false })
+    list.addEventListener('touchend', () => {
+      if (!swipeTracking) return
+      if (swipeTracking.axis === 'x') {
+        const row = swipeTracking.row
+        const offset = parseFloat(row.style.getPropertyValue('--swipe-x') || swipeTracking.offset)
+        row.classList.toggle('revealed', offset <= -46)
+        row.style.removeProperty('--swipe-x')
+        swipeSuppressClickUntil = Date.now() + 350
+      }
+      swipeTracking = null
+    }, { passive: true })
+    list.addEventListener('touchcancel', () => { swipeTracking = null }, { passive: true })
+  }
 }
 
 /* ---------------- 待办 ---------------- */
@@ -3134,6 +3173,484 @@ function syncBgConfig() {
   if ($('opt-bg-poll')?.checked && state.token) saveBgConfig(true)
 }
 
+/* ---------------- 语音输入(原生 SpeechRecognizer / webkit 兜底) ---------------- */
+const VOICE_LS = { mode: 'voiceInputMode', base: 'voiceApiBase', model: 'voiceApiModel', key: 'voiceApiKey' }
+const VOICE_SYSTEM_PROMPT = '你是一个文本润色助手。请将用户输入的语音转写文本转换为结构化的 prompt: 分条分点、逻辑清晰、修正语句与错别字、删除无意义的语气词与口语重复。只输出整理后的 prompt 本身, 不要输出解释。'
+const VOICE_CANCEL_DIST = 60 // 上移取消阈值(px)
+
+const voiceState = {
+  recording: false,      // 识别会话进行中
+  cancelled: false,      // 本次会话是否已取消(取消后忽略到达的回调)
+  target: 'composer',    // 'composer' | 'test'(功能测试页)
+  startY: 0,             // 按下时的 Y
+  moved: 0,              // 上移位移
+  finalText: '',         // 已收到的最终文本
+  pendingCommit: false,  // 松手后等待 native 的 final 回调再提交
+  apiKeyPlain: ''        // 设置页密钥明文(失焦打码用)
+}
+const voiceHandlers = { partial: null, final: null, error: null }
+let voiceSession = 0     // 每次开始识别自增, 防止旧会话回调误提交到新会话
+let webkitRec = null
+
+function speechBridge() { return window.NativeSpeech || null }
+/** 返回 true(原生)/'webkit'(浏览器兜底)/false(不支持) */
+function voiceRecSupported() {
+  const b = speechBridge()
+  if (b) {
+    try { return b.isAvailable ? !!b.isAvailable() : true } catch { return true }
+  }
+  if (window.SpeechRecognition || window.webkitSpeechRecognition) return 'webkit'
+  return false
+}
+
+/** 原生桥回传入口: {type:'partial'|'final'|'error', text, error} */
+window.__speechBridge = (ev) => {
+  if (!ev || !ev.type) return
+  if (ev.type === 'partial') { if (voiceHandlers.partial) voiceHandlers.partial(String(ev.text || '')) }
+  else if (ev.type === 'final') { if (voiceHandlers.final) voiceHandlers.final(String(ev.text || '')) }
+  else if (ev.type === 'error') { if (voiceHandlers.error) voiceHandlers.error(String(ev.error || 'unknown')) }
+}
+
+function voiceErrorText(code) {
+  if (code === 'permission' || code === '8') return t('voice.permissionDenied')
+  if (code === '5') return t('voice.speechTimeout')
+  if (code === '6') return t('voice.noMatch')
+  if (code === '7') return t('voice.busy')
+  return t('voice.recognitionError', { code })
+}
+
+function startVoiceRecognition(handlers) {
+  stopVoiceRecognition()
+  voiceHandlers.partial = handlers.partial || null
+  voiceHandlers.final = handlers.final || null
+  voiceHandlers.error = handlers.error || null
+  const b = speechBridge()
+  if (b && typeof b.start === 'function') {
+    try { b.start(); return true } catch { return false }
+  }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+  if (SR) {
+    try {
+      webkitRec = new SR()
+      webkitRec.continuous = true
+      webkitRec.interimResults = true
+      webkitRec.lang = (navigator.language || 'zh-CN').replace('_', '-')
+      webkitRec.onresult = (e) => {
+        let interim = '', finalTxt = ''
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const r = e.results[i]
+          if (r.isFinal) finalTxt += r[0].transcript
+          else interim += r[0].transcript
+        }
+        if (finalTxt && voiceHandlers.final) voiceHandlers.final(finalTxt)
+        if (interim && voiceHandlers.partial) voiceHandlers.partial(interim)
+      }
+      webkitRec.onerror = (e) => { if (voiceHandlers.error) voiceHandlers.error(String(e.error || 'unknown')) }
+      webkitRec.onend = () => { webkitRec = null }
+      webkitRec.start()
+      return true
+    } catch { return false }
+  }
+  return false
+}
+function stopVoiceRecognition() {
+  const b = speechBridge()
+  if (b && typeof b.stop === 'function') { try { b.stop() } catch {} }
+  if (webkitRec) { try { webkitRec.stop() } catch {} }
+}
+function cancelVoiceRecognition() {
+  const b = speechBridge()
+  if (b && typeof b.cancel === 'function') { try { b.cancel() } catch {} }
+  if (webkitRec) { try { webkitRec.abort() } catch {} }
+  webkitRec = null
+}
+
+function readVoiceConfig() {
+  return {
+    mode: LS.get(VOICE_LS.mode, 'raw') === 'prompt' ? 'prompt' : 'raw',
+    base: String(LS.get(VOICE_LS.base, '') || '').trim().replace(/\/+$/, ''),
+    model: String(LS.get(VOICE_LS.model, '') || '').trim(),
+    key: String(LS.get(VOICE_LS.key, '') || '').trim()
+  }
+}
+
+/** 调 OpenAI 兼容 chat/completions 把语音转写润色成 prompt。15s 超时。 */
+async function convertToPrompt(rawText) {
+  const cfg = readVoiceConfig()
+  if (!cfg.base || !cfg.model || !cfg.key) return { ok: false, raw: rawText, missing: true }
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 15000)
+  try {
+    const res = await fetch(cfg.base + '/chat/completions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + cfg.key },
+      body: JSON.stringify({
+        model: cfg.model,
+        messages: [
+          { role: 'system', content: VOICE_SYSTEM_PROMPT },
+          { role: 'user', content: String(rawText || '') }
+        ],
+        temperature: 0.3
+      }),
+      signal: ctrl.signal
+    })
+    const data = await res.json().catch(() => null)
+    if (!res.ok) {
+      const msg = (data && data.error && data.error.message) ? data.error.message : ('HTTP ' + res.status)
+      return { ok: false, raw: rawText, error: msg }
+    }
+    const out = data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text ?? ''
+    if (!String(out).trim()) return { ok: false, raw: rawText, error: t('voice.emptyResult') }
+    return { ok: true, text: String(out).trim() }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return { ok: false, raw: rawText, error: t('voice.timeout') }
+    return { ok: false, raw: rawText, error: (e && e.message) || t('voice.networkError') }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/* ---- 按住说话浮层 ---- */
+function openVoiceOverlay() {
+  const ov = $('voice-overlay')
+  ov.classList.remove('hidden', 'cancel')
+  $('voice-hint').textContent = t('voice.hintNormal')
+}
+function closeVoiceOverlay() {
+  const ov = $('voice-overlay')
+  ov.classList.add('hidden')
+  ov.classList.remove('cancel')
+  $('voice-hint').textContent = t('voice.hintNormal')
+}
+function clearHoldTalkPressed() {
+  $('hold-talk-btn').classList.remove('recording')
+  $('voice-test-hold').classList.remove('recording')
+}
+
+function beginHoldTalk(e, target) {
+  if (voiceState.recording) return
+  const mySession = ++voiceSession
+  voiceState.recording = true
+  voiceState.cancelled = false
+  voiceState.target = target || 'composer'
+  voiceState.startY = (e && e.touches && e.touches[0]) ? e.touches[0].clientY : 0
+  voiceState.moved = 0
+  voiceState.finalText = ''
+  voiceState.pendingCommit = false
+  if (voiceState.target === 'composer') $('hold-talk-btn').classList.add('recording')
+  else $('voice-test-hold').classList.add('recording')
+  openVoiceOverlay()
+  const ok = startVoiceRecognition({
+    partial: (txt) => { if (voiceState.target === 'test') $('voice-test-raw').value = txt },
+    final: (txt) => {
+      // 松手后 recording 已复位, 只认同一会话且未取消的 final
+      if (mySession !== voiceSession || voiceState.cancelled) return
+      voiceState.finalText = String(txt || '')
+      if (voiceState.pendingCommit) commitVoiceText(voiceState.finalText)
+    },
+    error: (code) => {
+      if (mySession !== voiceSession || voiceState.cancelled) return
+      voiceState.recording = false
+      voiceState.pendingCommit = false
+      voiceState.finalText = ''
+      clearHoldTalkPressed()
+      closeVoiceOverlay()
+      toast(voiceErrorText(code), 'err')
+    }
+  })
+  if (!ok) {
+    voiceState.recording = false
+    voiceState.cancelled = true
+    clearHoldTalkPressed()
+    closeVoiceOverlay()
+    toast(t('voice.unsupported'), 'err')
+    updateComposerChrome() // 不支持则隐藏语音图标
+  }
+}
+
+/** 浮层 touchmove: 上移超阈值 → 取消态 */
+function moveHoldTalk(e) {
+  if (!voiceState.recording) return
+  if (!e.touches || !e.touches[0]) return
+  voiceState.moved = (voiceState.startY || e.touches[0].clientY) - e.touches[0].clientY
+  const cancel = voiceState.moved > VOICE_CANCEL_DIST
+  $('voice-overlay').classList.toggle('cancel', cancel)
+  $('voice-hint').textContent = cancel ? t('voice.hintCancel') : t('voice.hintNormal')
+}
+
+/** 松手: 超阈值=取消; 否则停止识别, 拿到最终文本后提交 */
+function endHoldTalk() {
+  if (!voiceState.recording) return
+  const cancel = voiceState.moved > VOICE_CANCEL_DIST
+  voiceState.recording = false
+  clearHoldTalkPressed()
+  closeVoiceOverlay()
+  if (cancel) {
+    voiceState.cancelled = true
+    cancelVoiceRecognition()
+    voiceState.pendingCommit = false
+    voiceState.finalText = ''
+    return
+  }
+  if (voiceState.finalText) {
+    const text = voiceState.finalText
+    voiceState.finalText = ''
+    voiceState.pendingCommit = false
+    commitVoiceText(text)
+  } else {
+    voiceState.pendingCommit = true // native 的 final 回调异步到达后提交
+  }
+  stopVoiceRecognition()
+}
+
+function cancelHoldTalk() {
+  if (!voiceState.recording) return
+  voiceState.recording = false
+  voiceState.cancelled = true
+  voiceState.pendingCommit = false
+  voiceState.finalText = ''
+  clearHoldTalkPressed()
+  closeVoiceOverlay()
+  cancelVoiceRecognition()
+}
+
+/** 识别最终文本落点: 功能测试页→上半框; 会话输入框→(转换模式先调 API) */
+function commitVoiceText(text) {
+  const raw = String(text || '').trim()
+  if (!raw) return
+  if (voiceState.target === 'test') { $('voice-test-raw').value = raw; return }
+  const cfg = readVoiceConfig()
+  if (cfg.mode === 'prompt') {
+    if (!cfg.base || !cfg.model || !cfg.key) {
+      toast(t('voice.needConfig'), 'err')
+      writeComposerText(raw) // 未配置也保留原文, 不让语音白说
+      return
+    }
+    toast(t('voice.converting'), '')
+    convertToPrompt(raw).then((r) => {
+      if (r.ok) {
+        writeComposerText(r.text)
+        toast(t('voice.convertDone'), 'ok')
+      } else {
+        writeComposerText(r.raw) // 失败保留原始文本
+        const msg = r.missing ? t('voice.needConfig') : (r.error || t('voice.networkError'))
+        toast(t('voice.convertFailed', { msg }), 'err')
+      }
+    })
+    return
+  }
+  writeComposerText(raw)
+}
+
+function writeComposerText(text) {
+  const input = $('composer-input')
+  input.value = String(text || '')
+  if ($('composer').classList.contains('hold-talk')) setHoldTalk(false)
+  autosize(input)
+  updateComposerChrome()
+}
+
+/* ---- 输入框态: 语音图标显隐 / 5 行全屏 ---- */
+function composerLines(el) {
+  const cs = getComputedStyle(el)
+  const lh = parseFloat(cs.lineHeight) || 20
+  const pt = parseFloat(cs.paddingTop) || 0
+  const pb = parseFloat(cs.paddingBottom) || 0
+  return Math.max(1, Math.round((el.scrollHeight - pt - pb) / lh))
+}
+function composerFsActive() { return $('composer-wrap')?.classList.contains('fs') || false }
+
+function setHoldTalk(on) {
+  const c = $('composer')
+  if (!c) return
+  c.classList.toggle('hold-talk', on)
+  $('hold-talk-btn').classList.toggle('hidden', !on)
+  $('voice-ico-kbd').classList.toggle('hidden', !on)
+  $('voice-ico-mic').classList.toggle('hidden', on)
+  if (on) { try { $('composer-input').blur() } catch {} }
+  if (!on) updateComposerChrome()
+}
+
+function renderVoiceBtn(show) {
+  $('btn-voice').classList.toggle('hidden', !show)
+}
+
+function updateComposerChrome() {
+  const input = $('composer-input')
+  if (!input) return
+  const text = String(input.value || '').trim()
+  const inHold = $('composer').classList.contains('hold-talk')
+  const supported = voiceRecSupported()
+  const fs = composerFsActive()
+  // 按住说话态: 恒显示(键盘图标); 否则: 仅移动端 + 支持 + 无文本
+  renderVoiceBtn(inHold ? true : !!(isMobileDevice() && supported && !text))
+  // 全屏按钮: 全屏态常显; 普通态超过 5 行显示
+  const wrap = $('composer-input-wrap')
+  const showFs = fs || composerLines(input) > 5
+  $('btn-fs-toggle').classList.toggle('hidden', !showFs)
+  wrap.classList.toggle('has-fs-btn', showFs)
+  $('fs-ico-expand').classList.toggle('hidden', fs)
+  $('fs-ico-collapse').classList.toggle('hidden', !fs)
+}
+
+function setComposerFs(on) {
+  const wrap = $('composer-wrap')
+  wrap.classList.toggle('fs', on)
+  const fsBtn = $('btn-fs-toggle')
+  fsBtn.title = on ? t('voice.exitFullscreen') : t('voice.fullscreen')
+  fsBtn.setAttribute('aria-label', on ? t('voice.exitFullscreen') : t('voice.fullscreen'))
+  if (on) {
+    if ($('composer').classList.contains('hold-talk')) setHoldTalk(false) // 全屏/语音不冲突
+  } else {
+    wrap.classList.remove('dragging')
+    wrap.style.transform = ''
+  }
+  autosize($('composer-input'))
+  updateComposerChrome()
+}
+
+/* ---- 设置页: 语音输入 ---- */
+function showVoiceSettingsPage() {
+  $('settings-home').classList.add('hidden')
+  $('settings-page-general').classList.add('hidden')
+  $('settings-page-voice').classList.remove('hidden')
+  window.scrollTo(0, 0)
+}
+
+function maskApiKey(key) {
+  const s = String(key || '')
+  if (!s) return ''
+  if (s.length <= 8) return s[0] + '******'
+  return s.slice(0, 4) + '******' + s.slice(-4)
+}
+
+function initVoiceSettings() {
+  const cfg = readVoiceConfig()
+  voiceState.apiKeyPlain = cfg.key
+  $('voice-mode-' + (cfg.mode === 'prompt' ? 'prompt' : 'raw')).checked = true
+  $('voice-api-config').classList.toggle('hidden', cfg.mode !== 'prompt')
+  $('voice-api-base').value = LS.get(VOICE_LS.base, '') || ''
+  $('voice-api-model').value = LS.get(VOICE_LS.model, '') || ''
+  const keyInput = $('voice-api-key')
+  keyInput.value = cfg.key ? maskApiKey(cfg.key) : ''
+  keyInput.classList.toggle('masked', !!cfg.key)
+
+  document.querySelectorAll('input[name="voice-mode"]').forEach(r =>
+    r.addEventListener('change', () => {
+      const mode = $('voice-mode-prompt').checked ? 'prompt' : 'raw'
+      LS.set(VOICE_LS.mode, mode)
+      $('voice-api-config').classList.toggle('hidden', mode !== 'prompt')
+    }))
+
+  $('voice-api-base').addEventListener('change', () => LS.set(VOICE_LS.base, $('voice-api-base').value.trim()))
+  $('voice-api-model').addEventListener('change', () => LS.set(VOICE_LS.model, $('voice-api-model').value.trim()))
+  // 密钥: 输入中明文, 失焦自动打码
+  keyInput.addEventListener('input', () => { voiceState.apiKeyPlain = keyInput.value; keyInput.classList.remove('masked') })
+  keyInput.addEventListener('focus', () => {
+    if (voiceState.apiKeyPlain) keyInput.value = voiceState.apiKeyPlain
+    keyInput.classList.remove('masked')
+  })
+  keyInput.addEventListener('blur', () => {
+    const v = String(keyInput.value || '').trim()
+    if (v) { voiceState.apiKeyPlain = v; LS.set(VOICE_LS.key, v) }
+    keyInput.value = voiceState.apiKeyPlain ? maskApiKey(voiceState.apiKeyPlain) : ''
+    keyInput.classList.toggle('masked', !!voiceState.apiKeyPlain)
+  })
+
+  document.querySelectorAll('.voice-copy-btn').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      const ok = await copyText(VOICE_SYSTEM_PROMPT)
+      toast(t(ok ? 'voice.copied' : 'voice.copyFailed'), ok ? 'ok' : 'err')
+    }))
+
+  $('btn-voice-conn-test').addEventListener('click', runVoiceConnTest)
+  $('btn-voice-func-test').addEventListener('click', openVoiceTest)
+}
+
+async function runVoiceConnTest() {
+  const cfg = readVoiceConfig()
+  const result = $('voice-conn-result')
+  const btn = $('btn-voice-conn-test')
+  if (!cfg.base || !cfg.model || !cfg.key) {
+    result.textContent = t('voice.apiMissing')
+    result.style.color = 'var(--dsr-error)'
+    return
+  }
+  result.textContent = t('voice.testing')
+  result.style.color = ''
+  btn.disabled = true
+  const t0 = performance.now()
+  try {
+    let res = await fetch(cfg.base + '/models', { headers: { authorization: 'Bearer ' + cfg.key } })
+    if (!res.ok && res.status === 404) {
+      // 部分网关不实现 /models, 兜底发最小 chat 请求
+      res = await fetch(cfg.base + '/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + cfg.key },
+        body: JSON.stringify({ model: cfg.model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 })
+      })
+    }
+    const ms = Math.round(performance.now() - t0)
+    if (res.ok) { result.textContent = t('voice.connOk', { ms }); result.style.color = 'var(--dsr-success)' }
+    else { result.textContent = t('voice.connFail', { msg: 'HTTP ' + res.status + ' · ' + ms + 'ms' }); result.style.color = 'var(--dsr-error)' }
+  } catch (e) {
+    const ms = Math.round(performance.now() - t0)
+    result.textContent = t('voice.connFail', { msg: ((e && e.message) || t('voice.networkError')) + ' · ' + ms + 'ms' })
+    result.style.color = 'var(--dsr-error)'
+  } finally {
+    btn.disabled = false
+  }
+}
+
+function openVoiceTest() {
+  $('voice-test-page').classList.remove('hidden')
+  $('voice-test-raw').value = ''
+  $('voice-test-out').value = ''
+}
+function closeVoiceTest() {
+  if (voiceState.recording) cancelHoldTalk()
+  $('voice-test-page').classList.add('hidden')
+}
+
+/** 离开会话页/切换视图时清理输入框附加态 */
+function exitComposerExtras() {
+  if (voiceState.recording) cancelHoldTalk()
+  if ($('composer')?.classList.contains('hold-talk')) setHoldTalk(false)
+  if (composerFsActive()) setComposerFs(false)
+  closeVoiceTest()
+}
+
+/** 全屏输入框: 在输入框区域下滑 → 输入框跟随手指下移, 超阈值松手退出全屏 */
+function bindFsDrag() {
+  const input = $('composer-input')
+  const drag = { active: false, startY: 0 }
+  input.addEventListener('touchstart', (e) => {
+    if (!composerFsActive() || e.touches.length !== 1) return
+    drag.active = true
+    drag.startY = e.touches[0].clientY
+    $('composer-wrap').classList.add('dragging')
+  }, { passive: true })
+  input.addEventListener('touchmove', (e) => {
+    if (!drag.active || !composerFsActive()) return
+    const dy = e.touches[0].clientY - drag.startY
+    if (dy > 0 && input.scrollTop === 0) {
+      e.preventDefault()
+      $('composer-wrap').style.transform = 'translateY(' + dy + 'px)'
+    }
+  }, { passive: false })
+  const release = () => {
+    if (!drag.active) return
+    drag.active = false
+    const wrap = $('composer-wrap')
+    wrap.classList.remove('dragging')
+    const dy = parseFloat((wrap.style.transform || '').replace(/[^0-9.\-]/g, '')) || 0
+    wrap.style.transform = ''
+    if (dy > 80 && composerFsActive()) setComposerFs(false)
+  }
+  input.addEventListener('touchend', release)
+  input.addEventListener('touchcancel', release)
+}
+
 /* ---------------- 预设提示词 ---------------- */
 const PRESETS_KEY = 'dshPromptPresets'
 const PRESET_NAME_MAX = 20
@@ -3233,6 +3750,7 @@ function showView(id) {
   // 离开会话页必须清掉 in-session, 否则其他页面顶栏被 body 样式隐藏
   document.body.classList.toggle('in-session', id === 'view-session')
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === id))
+  if (id !== 'view-session') exitComposerExtras() // 离开会话页清理输入框附加态(语音/全屏)
   window.scrollTo(0, 0)
   if (id === 'view-files' && !state.fs.loaded) loadFs(null, { silent: true })
   if (id === 'view-stats') loadStats()
@@ -3245,6 +3763,7 @@ function showSettingsHome() {
   if (!home) return
   home.classList.remove('hidden')
   for (const name of SETTINGS_GROUPS) $('settings-page-' + name)?.classList.add('hidden')
+  $('settings-page-voice')?.classList.add('hidden')
   window.scrollTo(0, 0)
 }
 function showSettingsPage(name) {
@@ -3252,6 +3771,7 @@ function showSettingsPage(name) {
   if (!home || !SETTINGS_GROUPS.includes(name)) return
   home.classList.add('hidden')
   for (const g of SETTINGS_GROUPS) $('settings-page-' + g)?.classList.toggle('hidden', g !== name)
+  $('settings-page-voice')?.classList.add('hidden')
   window.scrollTo(0, 0)
 }
 
@@ -3295,6 +3815,7 @@ function updateConn() {
 
 function autosize(el) {
   el.style.height = 'auto'
+  if (composerFsActive()) return // 全屏态高度由 CSS 撑满
   el.style.height = Math.min(el.scrollHeight, 120) + 'px'
 }
 
@@ -3576,6 +4097,18 @@ function bindUi() {
     renderWorkbench()
   })
   $('wb-panel').addEventListener('click', (e) => {
+    if (swipeSuppressClickUntil > Date.now()) { swipeSuppressClickUntil = 0; return }
+    const archive = e.target.closest('[data-archive-session]')
+    if (archive) {
+      e.stopPropagation()
+      archiveSession(archive.dataset.archiveSession)
+      return
+    }
+    const swipeRow = e.target.closest('[data-session-swipe]')
+    if (swipeRow?.classList.contains('revealed')) {
+      swipeRow.classList.remove('revealed')
+      return
+    }
     const newButton = e.target.closest('[data-wb-new]')
     if (newButton) {
       safeRpc('session.create', { workspaceId: newButton.dataset.wbNew }, t('home.createFailed')).then(async v => {
@@ -3674,12 +4207,55 @@ function bindUi() {
   })
   $('btn-model-refresh').addEventListener('click', loadSessionModels)
   const input = $('composer-input')
-  input.addEventListener('input', () => autosize(input))
+  input.addEventListener('input', () => {
+    // 有文本时强制退出"按住说话"态并隐藏语音图标; 无文本恢复显示
+    if (String(input.value || '').trim() && $('composer').classList.contains('hold-talk')) setHoldTalk(false)
+    autosize(input)
+    updateComposerChrome()
+  })
   input.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || e.isComposing) return
     if (isMobileDevice() && mobileEnterAction() !== 'send') return
     if (!e.shiftKey) { e.preventDefault(); sendMessage() }
   })
+
+  // ---- 语音输入: 图标切换 / 按住说话 / 浮层 ----
+  $('btn-voice').addEventListener('click', () => {
+    if ($('composer').classList.contains('hold-talk')) setHoldTalk(false)
+    else setHoldTalk(true)
+  })
+  $('hold-talk-btn').addEventListener('touchstart', (e) => { e.preventDefault(); beginHoldTalk(e, 'composer') }, { passive: false })
+  const voiceOv = $('voice-overlay')
+  voiceOv.addEventListener('touchmove', (e) => {
+    if (!voiceState.recording) return
+    e.preventDefault()
+    moveHoldTalk(e)
+  }, { passive: false })
+  voiceOv.addEventListener('touchend', (e) => { if (voiceState.recording) { e.preventDefault(); endHoldTalk() } }, { passive: false })
+  voiceOv.addEventListener('touchcancel', () => { if (voiceState.recording) cancelHoldTalk() }, { passive: false })
+
+  // ---- 输入框全屏 ----
+  $('btn-fs-toggle').addEventListener('click', () => setComposerFs(!composerFsActive()))
+  bindFsDrag()
+
+  // ---- 设置: 语音输入 ----
+  $('voice-settings-entry').addEventListener('click', showVoiceSettingsPage)
+  $('voice-test-exit').addEventListener('click', closeVoiceTest)
+  $('voice-test-hold').addEventListener('touchstart', (e) => { e.preventDefault(); beginHoldTalk(e, 'test') }, { passive: false })
+  $('voice-test-convert').addEventListener('click', async () => {
+    const raw = String($('voice-test-raw').value || '').trim()
+    if (!raw) { toast(t('voice.testEmpty'), 'err'); return }
+    const btn = $('voice-test-convert')
+    btn.disabled = true
+    btn.textContent = t('voice.converting')
+    const r = await convertToPrompt(raw)
+    btn.disabled = false
+    btn.textContent = t('voice.convert')
+    if (r.ok) { $('voice-test-out').value = r.text; toast(t('voice.convertDone'), 'ok') }
+    else toast(r.missing ? t('voice.needConfig') : t('voice.convertFailed', { msg: r.error || t('voice.networkError') }), 'err')
+  })
+  initVoiceSettings()
+  updateComposerChrome()
 
   // 审批
   $('approval-allow').addEventListener('click', () => {
@@ -3712,6 +4288,7 @@ function bindUi() {
   $('view-settings').addEventListener('click', (e) => {
     const group = e.target.closest('[data-settings-group]')
     if (group) { showSettingsPage(group.dataset.settingsGroup); return }
+    if (e.target.closest('[data-voice-back]')) { showSettingsPage('general'); return }
     if (e.target.closest('[data-settings-back]')) { showSettingsHome(); return }
   })
   $('btn-scan-camera').addEventListener('click', () => scanPair('CAMERA'))

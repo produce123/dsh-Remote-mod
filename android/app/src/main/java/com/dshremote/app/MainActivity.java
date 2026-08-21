@@ -4,16 +4,21 @@ import android.app.DownloadManager;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.widget.Toast;
 
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.FileProvider;
 
 import com.getcapacitor.BridgeActivity;
@@ -23,12 +28,16 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
 
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
 
+  private static final int SPEECH_PERMISSION_REQ = 4101;
+
   private final Handler main = new Handler(Looper.getMainLooper());
+  private SpeechBridge speechBridge;
 
   @Override
   protected void onCreate(Bundle savedInstanceState) {
@@ -47,8 +56,25 @@ public class MainActivity extends BridgeActivity {
       bridge.getWebView().addJavascriptInterface(updateBridge, "NativeFile");
       BackgroundBridge backgroundBridge = new BackgroundBridge();
       bridge.getWebView().addJavascriptInterface(backgroundBridge, "NativeBackground");
+      speechBridge = new SpeechBridge();
+      bridge.getWebView().addJavascriptInterface(speechBridge, "NativeSpeech");
     } catch (Throwable ignored) {
     }
+  }
+
+  @Override
+  public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+    if (requestCode == SPEECH_PERMISSION_REQ && speechBridge != null) {
+      boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+      speechBridge.onPermissionResult(granted);
+    }
+  }
+
+  @Override
+  public void onDestroy() {
+    super.onDestroy();
+    if (speechBridge != null) speechBridge.destroyRecognizer();
   }
 
   private class UpdateBridge {
@@ -213,6 +239,150 @@ public class MainActivity extends BridgeActivity {
         return true;
       } catch (Throwable ignored) {
         return false;
+      }
+    }
+  }
+
+  /** 语音输入桥: android.speech.SpeechRecognizer 系统识别(WebView 不支持 Web Speech API)。
+   *  JS 侧 window.NativeSpeech.start()/stop()/cancel(), 回调经 evaluateJavascript 走
+   *  window.__speechBridge({type:'partial'|'final'|'error', text, error})。 */
+  private class SpeechBridge {
+    private SpeechRecognizer recognizer;
+    private boolean active = false;
+
+    @JavascriptInterface
+    public boolean isAvailable() {
+      try {
+        return SpeechRecognizer.isRecognitionAvailable(MainActivity.this);
+      } catch (Throwable t) {
+        return false;
+      }
+    }
+
+    /** 开始识别。首次调用先申请 RECORD_AUDIO 运行时权限, 授权回调后真正 start。 */
+    @JavascriptInterface
+    public void start() {
+      main.post(() -> {
+        if (active) return;
+        if (Build.VERSION.SDK_INT >= 23
+            && ActivityCompat.checkSelfPermission(MainActivity.this, android.Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+          ActivityCompat.requestPermissions(MainActivity.this,
+              new String[]{android.Manifest.permission.RECORD_AUDIO}, SPEECH_PERMISSION_REQ);
+          return;
+        }
+        startRecognizer();
+      });
+    }
+
+    void onPermissionResult(boolean granted) {
+      if (granted) startRecognizer();
+      else sendEvent("error", "", "permission");
+    }
+
+    /** 松手结束: 停止监听, onResults 会回调最终文本。 */
+    @JavascriptInterface
+    public void stop() {
+      main.post(() -> {
+        if (recognizer == null) return;
+        try {
+          recognizer.stopListening();
+        } catch (Throwable t) {
+          sendEvent("error", "", "4"); // ERROR_CLIENT
+          destroyRecognizer();
+        }
+      });
+    }
+
+    /** 上移取消: 直接取消, 不产生结果回调。 */
+    @JavascriptInterface
+    public void cancel() {
+      main.post(() -> {
+        try {
+          if (recognizer != null) recognizer.cancel();
+        } catch (Throwable ignored) {
+        }
+        destroyRecognizer();
+      });
+    }
+
+    private void startRecognizer() {
+      destroyRecognizer();
+      try {
+        recognizer = SpeechRecognizer.createSpeechRecognizer(MainActivity.this);
+        recognizer.setRecognitionListener(new RecognitionListener() {
+          @Override public void onReadyForSpeech(Bundle params) {}
+          @Override public void onBeginningOfSpeech() {}
+          @Override public void onRmsChanged(float rmsdB) {}
+          @Override public void onBufferReceived(byte[] buffer) {}
+          @Override public void onEndOfSpeech() {}
+          @Override public void onError(int error) {
+            active = false;
+            sendEvent("error", "", String.valueOf(error));
+            destroyRecognizer();
+          }
+          @Override public void onResults(Bundle results) {
+            active = false;
+            String text = firstResult(results);
+            sendEvent("final", text, "");
+            destroyRecognizer();
+          }
+          @Override public void onPartialResults(Bundle partialResults) {
+            String text = firstResult(partialResults);
+            if (text != null && !text.isEmpty()) sendEvent("partial", text, "");
+          }
+          @Override public void onEvent(int eventType, Bundle params) {}
+        });
+        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        recognizer.startListening(intent);
+        active = true;
+      } catch (Throwable t) {
+        sendEvent("error", "", "4"); // ERROR_CLIENT
+        destroyRecognizer();
+      }
+    }
+
+    private String firstResult(Bundle b) {
+      try {
+        ArrayList<String> list = b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+        return (list != null && !list.isEmpty()) ? list.get(0) : "";
+      } catch (Throwable t) {
+        return "";
+      }
+    }
+
+    void destroyRecognizer() {
+      try {
+        if (recognizer != null) {
+          recognizer.setRecognitionListener(null);
+          recognizer.destroy();
+        }
+      } catch (Throwable ignored) {
+      }
+      recognizer = null;
+      active = false;
+    }
+
+    /** 统一把事件送回 JS(主线程 evaluateJavascript)。 */
+    private void sendEvent(String type, String text, String error) {
+      try {
+        JSONObject o = new JSONObject();
+        o.put("type", type);
+        o.put("text", text == null ? "" : text);
+        o.put("error", error == null ? "" : error);
+        String js = "window.__speechBridge && window.__speechBridge(" + o.toString() + ")";
+        // U+2028/2029 在旧 JS 引擎字符串字面量里是非法字符, 手动转义
+        js = js.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029");
+        final String code = js;
+        main.post(() -> {
+          try {
+            bridge.getWebView().evaluateJavascript(code, null);
+          } catch (Throwable ignored) {
+          }
+        });
+      } catch (Throwable ignored) {
       }
     }
   }
