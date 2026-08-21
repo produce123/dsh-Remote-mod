@@ -1,6 +1,6 @@
 {
   "name": "dsh-remote",
-  "version": "0.6.5",
+  "version": "0.1.0-mod",
   "private": true,
   "dsh": {
     "bundle": {
@@ -15,7 +15,7 @@
     }
   },
   "description": "DSH 移动远程控制台: DSH 插件(内置网关自启停) + 独立网关 + Android App 一体",
-  "updateNotes": "连接稳定性全面优化：25 秒心跳保活（WiFi 切换 / NAT 超时不再假活）；60 秒无消息自动重连，指数退避重连（1s → 30s 上限 + 抖动）；网关死连接自动清理（60 秒无数据双向销毁）；断网自动检测与恢复（离线 / 重连中倒计时 / 连接失败状态可见）；降级轮询恢复优化。",
+  "updateNotes": "v0.1.0-mod 二次开发版新增：① 工作台绑定模式（电脑端绑定 workspace 文件夹、DSH Remote（绑定）面板、项目级会话、手机端工作台会话条、项目内新建会话、自动载入子项目工作区）；② 手机端归档会话折叠（------隐藏/显示已归档会话------）；③ /permission 二级参数选择（read-only / workspace-write / danger-full-access）；④ 手机端输入法换行修复。",
   "bin": "gateway.js",
   "pkg": {
     "assets": [

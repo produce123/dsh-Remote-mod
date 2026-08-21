@@ -61,6 +61,7 @@ const state = {
   pollSeq: { mux: 0, host: 0 },
   fs: { path: null, initial: null, loaded: false },
   models: { loaded: false, loading: false, groups: [], current: null, failures: [] },
+  wb: { bound: false, path: '', title: '', expanded: false, projects: null, open: null, apiMissing: false },
   view: 'sessions'
 }
 const streams = {}
@@ -1087,19 +1088,31 @@ async function refreshSessions() {
   state.sessions = v.items || []
   state.byId = new Map(state.sessions.map(s => [s.sessionId, s]))
   renderSessions()
+  scheduleWorkbenchRefresh()
 }
 function renderSessions() {
-  const items = [...state.sessions].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+  // 工作台绑定后: 属于工作台项目的会话不显示在扁平列表(只出现在工作台面板), 防止两处重复
+  const wbSessionIds = new Set()
+  if (state.wb.bound && state.wb.projects) {
+    for (const w of state.wb.projects) for (const id of (w.sessionIds || [])) wbSessionIds.add(id)
+  }
+  const items = [...state.sessions]
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    .filter(s => !(state.wb.bound && (wbSessionIds.has(s.sessionId) || (s.cwd && wbStrictInside(s.cwd, state.wb.path)))))
+  const hidden = state.sessions.length - items.length
   const html = items.map(s => {
     const title = titleOf(s)
     return `<button class="ds-session-item ${state.current === s.sessionId ? 'current' : ''}" data-id="${esc(s.sessionId)}">
       <span class="ds-session-title">${esc(title)}</span>
       <span class="ds-session-meta"><span class="ds-session-dot ${s.running ? 'running' : ''}"></span>${fmtTime(s.updatedAt)}</span>
     </button>`
-  }).join('') || `<div class="ds-empty">${t('ds.sessionsEmpty')}</div>`
+  }).join('') || (hidden > 0
+    ? `<div class="ds-empty">${esc(t('wb.flatHidden', { n: hidden }))}</div>`
+    : `<div class="ds-empty">${t('ds.sessionsEmpty')}</div>`)
   $('session-list').innerHTML = html
   $('mobile-session-list').innerHTML = html
   document.querySelectorAll('[data-id]').forEach(b => b.addEventListener('click', () => openSession(b.dataset.id)))
+  renderWorkbench()
 }
 
 async function openSession(id) {
@@ -1480,6 +1493,285 @@ function fsUp() {
   }
 }
 
+/* ---------------- 工作台绑定 / 面板 ---------------- */
+/* 路径比较: 分隔符归一化 + 大小写不敏感(Windows 前缀匹配) */
+function wbNorm(p) {
+  return String(p || '').replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/+$/, '')
+}
+function wbJoin(a, b) {
+  const s = String(a || '')
+  const sep = s.includes('\\') ? '\\' : '/'
+  return s.replace(/[\\/]+$/, '') + sep + String(b || '')
+}
+function wbInside(p, root) {
+  const a = wbNorm(p).toLowerCase()
+  const b = wbNorm(root).toLowerCase()
+  if (!a || !b) return false
+  return a === b || a.startsWith(b + '/')
+}
+function wbStrictInside(p, root) {
+  const a = wbNorm(p).toLowerCase()
+  const b = wbNorm(root).toLowerCase()
+  if (!a || !b) return false
+  return a !== b && a.startsWith(b + '/')
+}
+function wbFsParent(p) {
+  if (!p) return null
+  const s = String(p)
+  const sep = s.includes('\\') ? '\\' : '/'
+  const idx = s.lastIndexOf(sep)
+  if (idx <= 0) return null
+  const parent = s.slice(0, idx)
+  if (/^[A-Za-z]:$/.test(parent)) return null
+  return parent
+}
+/* 网关 /workbench API(鉴权同 /fs/*) */
+async function wbGateway(method, path, body) {
+  const opt = { method, headers: { authorization: 'Bearer ' + state.token, 'x-dsh-remote-client': 'web' } }
+  if (body !== undefined) { opt.headers['content-type'] = 'application/json'; opt.body = JSON.stringify(body) }
+  const res = await fetch(apiUrl(path), opt)
+  if (res.status === 401) throw new Error('AUTH')
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status))
+  return data
+}
+async function refreshWorkbench({ silent = false } = {}) {
+  if (!state.token) { renderWorkbench(); return }
+  let wb
+  try {
+    wb = await wbGateway('GET', '/workbench')
+    state.wb.apiMissing = false
+  } catch (e) {
+    if (e.message === 'AUTH') { toast(t('ds.toastAuth'), 'err'); return }
+    if (!silent) toast(t('wb.loadFailed', { msg: e.message }), 'err')
+    if (!state.wb.bound && /404/.test(e.message)) state.wb.apiMissing = true
+    renderWorkbench()
+    return
+  }
+  if (!wb.bound) {
+    state.wb.bound = false
+    state.wb.path = ''
+    state.wb.title = ''
+    state.wb.projects = null
+    renderWorkbench()
+    renderSessions()
+    return
+  }
+  state.wb.bound = true
+  state.wb.path = wb.path || ''
+  state.wb.title = wb.title || ''
+  const wl = await safeRpc('workspace.list', {}, '')
+  if (!wl) { renderWorkbench(); renderSessions(); return }
+  const wsItems = (wl.items || [])
+  let adopted = 0
+  // 自动收养: 根目录下尚未成为 workspace 的子目录 → workspace.create(幂等), 新项目自动出现
+  try {
+    const listRes = await fetch(fsApiUrl('/list', state.wb.path ? { path: state.wb.path } : {}), { headers: fsHeaders() })
+    if (listRes.ok) {
+      const listData = await listRes.json().catch(() => ({}))
+      const dirs = (listData.entries || []).filter(e => e.type === 'dir')
+      const have = new Set(wsItems.map(w => wbNorm(w.path)))
+      for (const d of dirs) {
+        const p = wbJoin(state.wb.path, d.name)
+        if (have.has(wbNorm(p))) continue
+        try {
+          const v = await rpc('workspace.create', { path: p })
+          if (v && v.workspace) { adopted++; wsItems.push(v.workspace) }
+        } catch {}
+      }
+    }
+  } catch {}
+  state.wb.projects = wsItems
+    .filter(w => wbStrictInside(w.path, state.wb.path))
+    .sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN', { numeric: true }))
+  renderWorkbench()
+  renderSessions()
+  if (adopted && !silent) toast(t('wb.adopted', { n: adopted }), 'ok')
+}
+function renderWorkbench() {
+  const box = $('workbench-box')
+  if (!box) return
+  const unbound = $('wb-unbound')
+  const bound = $('wb-bound')
+  if (!state.wb.bound) {
+    unbound.classList.remove('hidden')
+    bound.classList.add('hidden')
+    const hint = $('wb-api-hint')
+    if (hint) hint.classList.toggle('hidden', !state.wb.apiMissing)
+    return
+  }
+  unbound.classList.add('hidden')
+  bound.classList.remove('hidden')
+  const text = $('wb-head-text')
+  if (text) text.textContent = t('wb.bound', { title: state.wb.title || state.wb.path })
+  const head = $('wb-head')
+  if (head) head.setAttribute('aria-expanded', state.wb.expanded ? 'true' : 'false')
+  const caret = $('wb-caret')
+  if (caret) caret.textContent = state.wb.expanded ? '▾' : '▸'
+  const panel = $('wb-panel')
+  if (!panel) return
+  panel.classList.toggle('hidden', !state.wb.expanded)
+  if (!state.wb.expanded) return
+  const projects = state.wb.projects || []
+  let html = `<div class="ds-wb-panel-title">${esc(t('wb.projects'))}</div>`
+  if (projects.length) {
+    html += projects.map(w => {
+      const sessions = (w.sessionIds || [])
+        .map(id => state.byId.get(id))
+        .filter(Boolean)
+        .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+      const open = state.wb.open === w.workspaceId
+      return `<div class="ds-wb-project ${open ? 'open' : ''}">
+        <button type="button" class="ds-wb-project-head" data-wb-head="${esc(w.workspaceId)}">
+          <span class="ds-wb-caret" aria-hidden="true">${open ? '▾' : '▸'}</span>
+          <span class="ds-wb-project-title" title="${esc(w.path)}">${esc(w.title || short(w.workspaceId))}</span>
+          <span class="ds-wb-project-count">${sessions.length}</span>
+        </button>
+        <div class="ds-wb-project-body ${open ? '' : 'hidden'}">
+          <button type="button" class="ds-mini-btn ds-wb-new-session" data-wb-new="${esc(w.workspaceId)}">+ ${esc(t('wb.newSession'))}</button>
+          ${sessions.length ? sessions.map(s => `
+            <button type="button" class="ds-wb-session ${state.current === s.sessionId ? 'current' : ''}" data-wb-session="${esc(s.sessionId)}">
+              <span class="ds-wb-session-dot ${s.running ? 'running' : ''}"></span><span class="ds-wb-session-title">${esc(titleOf(s))}</span>
+            </button>`).join('') : `<div class="ds-wb-session-empty">${esc(t('wb.noSessions'))}</div>`}
+        </div>
+      </div>`
+    }).join('')
+  } else {
+    html += `<div class="ds-wb-empty">${esc(t('wb.noProjects'))}</div>`
+  }
+  html += `<button type="button" class="ds-mini-btn ds-wb-unbind-panel" data-wb-unbind-panel>${esc(t('wb.unbind'))}</button>`
+  panel.innerHTML = html
+  panel.querySelectorAll('[data-wb-head]').forEach(b => b.addEventListener('click', () => {
+    const id = b.dataset.wbHead
+    state.wb.open = state.wb.open === id ? null : id
+    renderWorkbench()
+  }))
+  panel.querySelectorAll('[data-wb-new]').forEach(b => b.addEventListener('click', async () => {
+    const v = await safeRpc('session.create', { workspaceId: b.dataset.wbNew }, '')
+    if (v && v.sessionId) { await refreshSessions(); openSession(v.sessionId) }
+  }))
+  panel.querySelectorAll('[data-wb-session]').forEach(b => b.addEventListener('click', () => openSession(b.dataset.wbSession)))
+  panel.querySelectorAll('[data-wb-unbind-panel]').forEach(b => b.addEventListener('click', unbindWorkbench))
+}
+/* 绑定弹窗: /fs/list 目录浏览 */
+const wbFs = { path: null, initial: null }
+function openWorkbenchModal() {
+  const modal = $('modal-workbench')
+  if (!modal) return
+  modal.classList.remove('hidden')
+  wbFs.path = null
+  wbFs.initial = null
+  wbFsLoad(null)
+  setTimeout(() => { const i = $('wb-path-input'); if (i) i.focus() }, 50)
+}
+function closeWorkbenchModal() {
+  const modal = $('modal-workbench')
+  if (modal) modal.classList.add('hidden')
+}
+async function wbFsLoad(dir) {
+  const box = $('wb-fs-list')
+  if (!box) return
+  const pathEl = $('wb-fs-path')
+  const target = dir ?? wbFs.path ?? ''
+  box.innerHTML = `<div class="ds-empty">${esc(t('ds.loading'))}</div>`
+  pathEl.textContent = target ? '…' + target.slice(-40) : '~'
+  try {
+    const res = await fetch(fsApiUrl('/list', target ? { path: target } : {}), { headers: fsHeaders() })
+    if (res.status === 401) { toast(t('ds.toastAuth'), 'err'); return }
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !Array.isArray(data.entries)) throw new Error(data.error || ('HTTP ' + res.status))
+    wbFs.path = data.path
+    if (!wbFs.initial) wbFs.initial = data.path
+    pathEl.textContent = data.path
+    const dirs = (data.entries || []).filter(e => e.type === 'dir')
+    box.innerHTML = dirs.length ? dirs.map(d => {
+      const p = wbJoin(data.path, d.name)
+      return `<div class="ds-wb-fs-row" data-wb-dir="${esc(p)}">
+        <span class="ds-wb-fs-ico">📁</span>
+        <span class="ds-wb-fs-name">${esc(d.name)}</span>
+        <button type="button" class="ds-btn ds-wb-select" data-wb-select="${esc(p)}">${esc(t('wb.selectDir'))}</button>
+      </div>`
+    }).join('') : `<div class="ds-empty">${esc(t('wb.empty'))}</div>`
+    box.querySelectorAll('[data-wb-dir]').forEach(row => row.addEventListener('click', (e) => {
+      if (e.target.closest('[data-wb-select]')) return
+      wbFsLoad(row.dataset.wbDir)
+    }))
+    box.querySelectorAll('[data-wb-select]').forEach(btn => btn.addEventListener('click', () => bindWorkbench(btn.dataset.wbSelect)))
+  } catch (e) {
+    pathEl.textContent = target || '~'
+    const hint = !target ? `<div class="ds-wb-empty">${esc(t('wb.browseFailed'))}</div>` : ''
+    box.innerHTML = hint + `<div class="ds-empty">${esc(e.message || t('ds.toastConnFailed'))}</div>`
+  }
+}
+function wbFsUp() {
+  if (wbFs.path && wbFs.initial && wbFs.path !== wbFs.initial) {
+    const parent = wbFsParent(wbFs.path)
+    if (parent && parent !== wbFs.path) wbFsLoad(parent)
+  }
+}
+async function bindWorkbench(path) {
+  const raw = String(path || '').trim()
+  if (!raw) return toast(t('wb.pathEmpty'), 'err')
+  let wb
+  try {
+    wb = await wbGateway('POST', '/workbench/bind', { path: raw })
+    if (!wb.bound) throw new Error(wb.error || 'bind failed')
+  } catch (e) {
+    if (e.message === 'AUTH') { toast(t('ds.toastAuth'), 'err'); return }
+    toast(t('wb.bindFailed', { msg: e.message }), 'err')
+    return
+  }
+  state.wb.bound = true
+  state.wb.path = wb.path || raw
+  state.wb.title = wb.title || ''
+  state.wb.apiMissing = false
+  // 绑定根目录 + 根目录下每个已存在的子目录 → workspace.create(幂等: 已存在则 created:false, 无副作用)
+  const paths = [state.wb.path]
+  try {
+    const listRes = await fetch(fsApiUrl('/list', { path: state.wb.path }), { headers: fsHeaders() })
+    if (listRes.ok) {
+      const listData = await listRes.json().catch(() => ({}))
+      for (const d of (listData.entries || [])) {
+        if (d.type === 'dir') paths.push(wbJoin(state.wb.path, d.name))
+      }
+    }
+  } catch {}
+  for (const p of paths) {
+    try { await rpc('workspace.create', { path: p }) } catch {}
+  }
+  closeWorkbenchModal()
+  state.wb.expanded = true
+  state.wb.open = null
+  toast(t('wb.boundOk', { path: state.wb.path }), 'ok')
+  await refreshWorkbench({ silent: true })
+  await refreshSessions()
+}
+async function unbindWorkbench() {
+  if (!confirm(t('wb.unbindConfirm'))) return
+  try {
+    const wb = await wbGateway('POST', '/workbench/unbind')
+    if (wb.bound !== false && wb.bound !== undefined) throw new Error('unbind failed')
+  } catch (e) {
+    if (e.message === 'AUTH') { toast(t('ds.toastAuth'), 'err'); return }
+    toast(t('wb.unbindFailed', { msg: e.message }), 'err')
+    return
+  }
+  state.wb.bound = false
+  state.wb.path = ''
+  state.wb.title = ''
+  state.wb.projects = null
+  state.wb.open = null
+  state.wb.expanded = false
+  renderWorkbench()
+  renderSessions()
+  toast(t('wb.unboundOk'), 'ok')
+}
+let wbRefreshTimer = null
+function scheduleWorkbenchRefresh() {
+  clearTimeout(wbRefreshTimer)
+  wbRefreshTimer = setTimeout(() => refreshWorkbench({ silent: true }), 400)
+}
+
 /* ---------------- 统计 ---------------- */
 function bucketTokens(b) { return (b.input || 0) + (b.cacheRead || 0) + (b.cacheWrite || 0) + (b.output || 0) }
 let statsDrawerOpened = false
@@ -1739,6 +2031,21 @@ function bindUi() {
   })
   $('fs-up').addEventListener('click', fsUp)
   $('fs-refresh').addEventListener('click', () => loadFs(state.fs.path || null))
+  // 工作台
+  $('btn-wb-bind').addEventListener('click', openWorkbenchModal)
+  $('btn-wb-bind-manual').addEventListener('click', () => bindWorkbench($('wb-path-input')?.value))
+  $('wb-path-input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); bindWorkbench($('wb-path-input')?.value) } })
+  $('wb-fs-up').addEventListener('click', wbFsUp)
+  $('wb-fs-home').addEventListener('click', () => wbFsLoad(wbFs.initial || null))
+  $('btn-wb-modal-close').addEventListener('click', closeWorkbenchModal)
+  $('modal-workbench').addEventListener('click', (e) => { if (e.target === $('modal-workbench')) closeWorkbenchModal() })
+  $('wb-head').addEventListener('click', () => {
+    state.wb.expanded = !state.wb.expanded
+    if (state.wb.expanded && !state.wb.projects) refreshWorkbench({ silent: false })
+    else renderWorkbench()
+  })
+  $('btn-wb-path').addEventListener('click', () => { if (state.wb.path) toast(t('wb.boundPath', { path: state.wb.path }), 'ok') })
+  $('btn-wb-unbind').addEventListener('click', unbindWorkbench)
   $('btn-question-submit').addEventListener('click', submitQuestion)
   $('btn-question-cancel').addEventListener('click', () => { $('modal-question').classList.add('hidden'); toast(t('ds.ignored'), 'ok') })
 }
@@ -1755,12 +2062,14 @@ async function start() {
   }
   $('token-desc').textContent = state.token ? '● ' + state.token.slice(0, 12) + '…' : t('ds.toastAuth')
   bindUi()
+  renderWorkbench()
   updateConn()
   checkNotesOnStart()
   if (state.token) {
     if (state.servers.length) await selectFastestServer({ silent: true, reconnect: false })
     openStreams()
     refreshSessions()
+    refreshWorkbench({ silent: true })
   }
 }
 

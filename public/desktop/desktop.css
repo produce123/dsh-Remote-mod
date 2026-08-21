@@ -286,6 +286,57 @@ a.ds-btn { text-decoration: none; }
 .ds-preset-preview { font-size: 11.5px; color: var(--dsr-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ds-preset-empty { font-size: 12.5px; color: var(--dsr-muted); text-align: center; padding: 18px 0; }
 
+/* 工作台 */
+.ds-workbench { border: 1px solid var(--dsr-line); border-radius: 12px; background: var(--dsr-bg-2); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.ds-wb-badge { font-size: 11.5px; font-weight: 700; color: var(--dsr-accent-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ds-wb-unbound { display: flex; flex-direction: column; gap: 6px; }
+.ds-wb-bind-btn { justify-content: center; width: 100%; }
+.ds-wb-api-hint { font-size: 10.5px; color: var(--dsr-warning); line-height: 1.4; }
+.ds-wb-bound { display: flex; flex-direction: column; gap: 6px; }
+.ds-wb-head { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border: none; background: transparent; color: var(--dsr-text); font: inherit; font-size: 12.5px; font-weight: 700; padding: 2px; cursor: pointer; }
+.ds-wb-head:hover { color: var(--dsr-accent-strong); }
+.ds-wb-caret { flex: none; color: var(--dsr-muted); font-size: 10px; width: 12px; text-align: center; }
+.ds-wb-head-text { flex: 1; min-width: 0; }
+.ds-wb-actions { display: flex; gap: 6px; }
+.ds-wb-actions .ds-mini-btn { flex: 1; }
+.ds-wb-panel { border-top: 1px solid var(--dsr-divider); padding-top: 6px; display: flex; flex-direction: column; gap: 5px; max-height: 42vh; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--dsr-line) transparent; }
+.ds-wb-panel-title { font-size: 10.5px; font-weight: 700; color: var(--dsr-muted); letter-spacing: .6px; text-transform: uppercase; }
+.ds-wb-project { border: 1px solid var(--dsr-line); border-radius: 9px; background: var(--dsr-panel); overflow: hidden; }
+.ds-wb-project-head { width: 100%; display: flex; align-items: center; gap: 6px; border: none; background: transparent; color: var(--dsr-text); font: inherit; font-size: 12.5px; padding: 6px 8px; cursor: pointer; text-align: left; }
+.ds-wb-project-head:hover { background: var(--dsr-bg-2); }
+.ds-wb-project-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ds-wb-project-count { flex: none; font-size: 10.5px; color: var(--dsr-muted); background: var(--dsr-bg-2); border-radius: 999px; padding: 0 7px; line-height: 16px; }
+.ds-wb-project-body { display: flex; flex-direction: column; gap: 3px; padding: 2px 6px 7px; }
+.ds-wb-new-session { align-self: flex-start; margin: 2px 0 3px; }
+.ds-wb-session { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border: none; background: transparent; color: var(--dsr-text); font: inherit; font-size: 12px; padding: 5px 7px; border-radius: 7px; cursor: pointer; }
+.ds-wb-session:hover { background: var(--dsr-bg-2); }
+.ds-wb-session.current { background: var(--dsr-accent-soft); color: var(--dsr-accent-strong); }
+.ds-wb-session-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--dsr-line); }
+.ds-wb-session-dot.running { background: var(--dsr-warning); }
+.ds-wb-session-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ds-wb-session-empty { font-size: 11px; color: var(--dsr-muted); padding: 3px 7px; }
+.ds-wb-empty { font-size: 11.5px; color: var(--dsr-muted); padding: 6px 4px; line-height: 1.5; }
+.ds-wb-unbind-panel { align-self: flex-end; }
+.ds-wb-panel::-webkit-scrollbar { width: 8px; }
+.ds-wb-panel::-webkit-scrollbar-thumb { background: var(--dsr-line); border-radius: 999px; }
+
+/* 绑定工作台弹窗 */
+.ds-wb-modal-desc { font-size: 12.5px; color: var(--dsr-muted); line-height: 1.5; }
+.ds-wb-fsbar { display: flex; align-items: center; gap: 8px; }
+.ds-wb-fs-path { flex: 1; min-width: 0; font-size: 12px; color: var(--dsr-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ds-wb-fs-list { border: 1px solid var(--dsr-line); border-radius: 12px; background: var(--dsr-panel); max-height: 42vh; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--dsr-line) transparent; }
+.ds-wb-fs-row { display: flex; align-items: center; gap: 9px; padding: 8px 11px; border-bottom: 1px solid var(--dsr-divider); font-size: 13px; cursor: pointer; }
+.ds-wb-fs-row:last-child { border-bottom: none; }
+.ds-wb-fs-row:hover { background: var(--dsr-bg-2); }
+.ds-wb-fs-ico { flex: none; }
+.ds-wb-fs-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ds-wb-select { flex: none; }
+.ds-wb-manual { display: flex; gap: 8px; }
+.ds-wb-manual input { flex: 1; min-width: 0; background: var(--dsr-panel); color: var(--dsr-text); border: 1px solid var(--dsr-line); border-radius: 10px; padding: 8px 10px; font: inherit; font-size: 13px; outline: none; }
+.ds-wb-manual input:focus { border-color: var(--dsr-accent-line); }
+.ds-wb-fs-list::-webkit-scrollbar { width: 8px; }
+.ds-wb-fs-list::-webkit-scrollbar-thumb { background: var(--dsr-line); border-radius: 999px; }
+
 .ds-toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 150; background: var(--dsr-panel); border: 1px solid var(--dsr-line); border-radius: 10px; padding: 9px 15px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.3); }
 .ds-toast.hidden { display: none; }
 

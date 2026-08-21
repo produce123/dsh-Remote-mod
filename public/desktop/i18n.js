@@ -1,4 +1,7 @@
-/* DSH Remote 桌面端轻量 i18n · 零依赖（与 public/i18n.js 同构） */
+/* DSH Remote 桌面端轻量 i18n · 零依赖（与 public/i18n.js 同构）
+ * 页面内联定义 window.DESKTOP_STR = { zh, en } 作为基础词表；
+ * 本文件内置 BUILTIN 词表（工作台等新增功能文案集中维护在这里，中英两组），
+ * I18N.init 时合并：页面词表优先，缺失键回落到 BUILTIN。 */
 'use strict'
 ;(function () {
   const store = {
@@ -10,6 +13,77 @@
     if (saved === 'zh' || saved === 'en') return saved
     return (navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en'
   }
+
+  /* 内置词表: 工作台(workbench)功能文案, 含中文/英文两组 */
+  const BUILTIN = {
+    zh: {
+      'wb.unbound': 'DSH Remote（未绑定）',
+      'wb.bind': '绑定工作台',
+      'wb.bound': 'DSH Remote（绑定 {title}）',
+      'wb.viewPath': '已绑定 workspace',
+      'wb.unbind': '解绑',
+      'wb.unbindConfirm': '确定解绑当前工作台？解绑后这些会话将回到扁平会话列表。',
+      'wb.modalTitle': '绑定工作台',
+      'wb.modalDesc': '选择工作台根目录（其下每个子文件夹会自动成为项目工作区）',
+      'wb.up': '上级',
+      'wb.home': '根目录',
+      'wb.selectDir': '选择此目录',
+      'wb.pathPlaceholder': '或手动输入绝对路径…',
+      'wb.pathEmpty': '请输入要绑定的路径',
+      'wb.browseFailed': '目录浏览不可用，请在上方手动输入绝对路径',
+      'wb.empty': '此目录没有子文件夹',
+      'wb.boundOk': '工作台已绑定：{path}',
+      'wb.bindFailed': '绑定失败：{msg}',
+      'wb.unboundOk': '已解绑工作台',
+      'wb.unbindFailed': '解绑失败：{msg}',
+      'wb.boundPath': '绑定路径：{path}',
+      'wb.projects': '项目',
+      'wb.noProjects': '暂无项目（根目录下新建文件夹后会自动出现）',
+      'wb.newSession': '新会话',
+      'wb.noSessions': '暂无会话',
+      'wb.adopted': '已自动载入 {n} 个项目',
+      'wb.flatHidden': '工作台会话已收起（{n} 个在下方面板）',
+      'wb.loadFailed': '工作台加载失败：{msg}',
+      'wb.apiMissing': '工作台接口不可用（需更新网关）'
+    },
+    en: {
+      'wb.unbound': 'DSH Remote (unbound)',
+      'wb.bind': 'Bind workbench',
+      'wb.bound': 'DSH Remote (bound {title})',
+      'wb.viewPath': 'Bound workspace',
+      'wb.unbind': 'Unbind',
+      'wb.unbindConfirm': 'Unbind the current workbench? These sessions will return to the flat session list.',
+      'wb.modalTitle': 'Bind workbench',
+      'wb.modalDesc': 'Choose the workbench root folder (every subfolder becomes a project workspace automatically)',
+      'wb.up': 'Up',
+      'wb.home': 'Root',
+      'wb.selectDir': 'Select this folder',
+      'wb.pathPlaceholder': 'Or type an absolute path…',
+      'wb.pathEmpty': 'Enter a path to bind',
+      'wb.browseFailed': 'Folder browsing unavailable — type an absolute path above',
+      'wb.empty': 'No subfolders in this folder',
+      'wb.boundOk': 'Workbench bound: {path}',
+      'wb.bindFailed': 'Bind failed: {msg}',
+      'wb.unboundOk': 'Workbench unbound',
+      'wb.unbindFailed': 'Unbind failed: {msg}',
+      'wb.boundPath': 'Bound path: {path}',
+      'wb.projects': 'Projects',
+      'wb.noProjects': 'No projects yet (new folders under the root appear automatically)',
+      'wb.newSession': 'New session',
+      'wb.noSessions': 'No sessions',
+      'wb.adopted': 'Auto-loaded {n} project(s)',
+      'wb.flatHidden': 'Workbench sessions folded ({n} in the panel below)',
+      'wb.loadFailed': 'Workbench load failed: {msg}',
+      'wb.apiMissing': 'Workbench API unavailable (update gateway)'
+    }
+  }
+
+  function mergeDicts(base, extra) {
+    const out = { zh: {}, en: {} }
+    for (const l of ['zh', 'en']) out[l] = Object.assign({}, (extra && extra[l]) || {}, (base && base[l]) || {})
+    return out
+  }
+
   let dict = null
   let lang = detect()
 
@@ -46,7 +120,7 @@
   }
 
   window.I18N = {
-    init(strings) { dict = strings || dict; return apply(document) },
+    init(strings) { dict = strings ? mergeDicts(strings, BUILTIN) : (dict || BUILTIN); return apply(document) },
     t, setLang, apply,
     get lang() { return lang }
   }

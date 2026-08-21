@@ -47,6 +47,7 @@ const WS_IDLE_MS = Number(process.env.GATEWAY_WS_IDLE_MS) || 60000
 const UPSTREAM = new URL(process.env.DSH_UPSTREAM || 'http://127.0.0.1:3080')
 const TOKEN_FILE = process.env.TOKEN_FILE || path.join(os.homedir(), '.dsh-remote', 'token')
 const NOTES_FILE = process.env.DSH_REMOTE_NOTES || path.join(os.homedir(), '.dsh-remote', 'device-notes.json')
+const WORKBENCH_FILE = process.env.DSH_REMOTE_WORKBENCH || path.join(os.homedir(), '.dsh-remote', 'workbench.json')
 const STARTED_AT = Date.now()
 
 // 更新检查: GitHub 为默认源, 可用环境变量覆盖(国内镜像 / 代理)
@@ -83,11 +84,12 @@ const MIME = {
 
 // ---------- /fs 文件传输 ----------
 // 允许访问的根目录: DSH_REMOTE_FS_ROOT 用 ':' 分隔多个根, 默认仅 ~。
-// 所有 /fs/* 路径 resolve 后都必须位于某个根内, 已存在的路径还会用 realpath
-// 复核一次, 防止 ../ 穿越与符号链接逃逸。
+// 注意: Windows 上默认 home 路径含盘符 (C:\), 不能对默认值做 ':' split,
+// 否则盘符被切开导致 /fs/list 初始路径 404。只有显式设置 DSH_REMOTE_FS_ROOT 时才按 ':' 分隔。
 const FS_DEFAULT_ROOT = path.resolve(os.homedir())
-const FS_ROOTS = (process.env.DSH_REMOTE_FS_ROOT || FS_DEFAULT_ROOT)
-  .split(':')
+const FS_ROOTS = (process.env.DSH_REMOTE_FS_ROOT
+  ? process.env.DSH_REMOTE_FS_ROOT.split(':')
+  : [FS_DEFAULT_ROOT])
   .filter(Boolean)
   .map(r => path.resolve(r.trim() === '~' ? FS_DEFAULT_ROOT : r.trim()))
 const FS_MAX_UPLOAD = Number(process.env.DSH_REMOTE_FS_MAX_UPLOAD) || 2 * 1024 * 1024 * 1024
@@ -1594,6 +1596,79 @@ function serveFs(req, res, url) {
   fsJson(res, 404, { error: 'not-found' })
 }
 
+// ---------- /workbench 工作台绑定 ----------
+// 桌面端把本机 workspace 文件夹绑定到网关, 手机端据此进入工作台会话。
+// 绑定持久化到 ~/.dsh-remote/workbench.json; 文件缺失或损坏一律视为未绑定。
+function loadWorkbench() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(WORKBENCH_FILE, 'utf8'))
+    if (raw && typeof raw.path === 'string' && raw.path) return { path: raw.path }
+  } catch {}
+  return null
+}
+function saveWorkbench(binding) {
+  try {
+    fs.mkdirSync(path.dirname(WORKBENCH_FILE), { recursive: true })
+    fs.writeFileSync(WORKBENCH_FILE, JSON.stringify(binding, null, 2))
+  } catch {}
+}
+
+function serveWorkbench(req, res, url) {
+  const sub = url.pathname.slice('/workbench'.length)
+
+  // 跨域预检: 手机端控制台可能从 DSH /remote 页访问网关(Authorization 非简单头)
+  if (req.method === 'OPTIONS') {
+    cors(res)
+    res.writeHead(204)
+    res.end()
+    return
+  }
+  if (!fsAuthorized(req, url, res)) return
+
+  if (sub === '' && req.method === 'GET') {
+    const b = loadWorkbench()
+    fsJson(res, 200, { bound: !!b, path: b ? b.path : null, title: b ? path.basename(b.path) : null })
+    return
+  }
+
+  if (sub === '/bind' && req.method === 'POST') {
+    let body = ''
+    req.on('data', c => { body += c; if (body.length > 4096) req.destroy() })
+    req.on('end', () => {
+      try {
+        const raw = JSON.parse(body || '{}').path
+        if (typeof raw !== 'string' || !path.isAbsolute(raw)) {
+          return fsJson(res, 400, { error: 'bad-path', detail: 'path 必须是绝对路径' })
+        }
+        const abs = path.resolve(raw)
+        let st
+        try { st = fs.statSync(abs) } catch (err) {
+          return fsJson(res, 400, { error: err.code === 'ENOENT' ? 'not-found' : 'permission-denied' })
+        }
+        if (!st.isDirectory()) return fsJson(res, 400, { error: 'not-a-directory' })
+        let real
+        try { real = fs.realpathSync(abs) } catch (err) {
+          return fsJson(res, 400, { error: err.code === 'ENOENT' ? 'not-found' : 'permission-denied' })
+        }
+        saveWorkbench({ path: real })
+        fsJson(res, 200, { bound: true, path: real, title: path.basename(real) })
+      } catch {
+        fsJson(res, 400, { error: 'bad-request' })
+      }
+    })
+    return
+  }
+
+  if (sub === '/unbind' && req.method === 'POST') {
+    try { fs.rmSync(WORKBENCH_FILE, { force: true }) } catch {}
+    fsJson(res, 200, { bound: false })
+    return
+  }
+
+  res.writeHead(405, { allow: 'GET, POST' })
+  res.end()
+}
+
 // ---------- /api 代理 ----------
 function proxyApi(req, res, url) {
   if (req.method === 'OPTIONS') {
@@ -1684,6 +1759,7 @@ const server = http.createServer((req, res) => {
   try {
     const url = new URL(req.url, 'http://dsh-remote.local')
     if (url.pathname === '/fs' || url.pathname.startsWith('/fs/')) return serveFs(req, res, url)
+    if (url.pathname === '/workbench' || url.pathname.startsWith('/workbench/')) return serveWorkbench(req, res, url)
     if (url.pathname === '/feedback') return serveFeedback(req, res, url)
     if (url.pathname.startsWith('/admin/api')) return serveAdminApi(req, res, url)
     if (url.pathname.startsWith('/stats')) return serveStats(req, res, url)

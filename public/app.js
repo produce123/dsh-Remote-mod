@@ -61,7 +61,12 @@ const state = {
   pollSeq: { mux: 0, host: 0 },
   refreshTimer: null,
   fs: { path: null, initial: null, loaded: false, upload: null },
-  models: { loaded: false, loading: false, groups: [], current: null, failures: [] }
+  models: { loaded: false, loading: false, groups: [], current: null, failures: [] },
+  wb: null,               // GET /workbench: { bound, path, title } (null = 未获取/未绑定)
+  wbProjects: [],         // workspace.list items
+  wbArchived: [],         // workspace.list archivedSessionIds
+  wbOpen: false,          // 工作台面板展开状态
+  wbOpenProjects: {}      // workspaceId -> 项目行展开状态
 }
 
 const $ = (id) => document.getElementById(id)
@@ -1056,6 +1061,7 @@ async function refreshSessions() {
   state.byId = new Map(state.sessions.map(s => [s.sessionId, s]))
   cacheWrite(CACHE.sessions, state.sessions.slice(0, 80))
   renderSessions()
+  await refreshWorkbench()
 }
 
 function proj(s, key, d) { return s?.projections?.values?.[key] ?? d }
@@ -1088,10 +1094,124 @@ function updatePendingBadge() {
   if (pending) $('nav-pending').textContent = pending
 }
 
+/* ---------------- 工作台绑定 (mobile) ---------------- */
+/** 手机端判定: 原生 App 或移动端 UA。 */
+function isMobileDevice() {
+  return !!CAP?.isNativePlatform?.() || /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(navigator.userAgent || '')
+}
+/** 取路径最后一段 (兼容 / 与 \)。 */
+function basenameOf(p) {
+  const s = String(p ?? '')
+  if (!s) return ''
+  return s.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || s
+}
+/** 绑定根目录(小写、去尾部分隔符), 未绑定返回 null。 */
+function workbenchRoot() {
+  if (!state.wb?.bound || !state.wb.path) return null
+  return String(state.wb.path).toLowerCase().replace(/[\\/]+$/, '')
+}
+/** Windows 风格 case-insensitive 前缀匹配: p 是否严格位于 root 之下(不含 root 本身)。 */
+function isUnder(root, p) {
+  if (!root || !p) return false
+  const pp = String(p).toLowerCase().replace(/[\\/]+$/, '')
+  if (pp === root) return false
+  return pp.startsWith(root + '\\') || pp.startsWith(root + '/')
+}
+
+/** 刷新工作台数据: GET /workbench + workspace.list。失败静默, 保持上次状态。 */
+async function refreshWorkbench() {
+  if (!state.token) return
+  try {
+    const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+      ? AbortSignal.timeout(15000)
+      : undefined
+    const res = await fetch(apiUrl('/workbench'), {
+      headers: { authorization: 'Bearer ' + state.token, 'x-dsh-remote-client': CAP?.isNativePlatform?.() ? 'app' : 'web' },
+      ...(signal ? { signal } : {})
+    })
+    if (res.ok) {
+      const json = await res.json().catch(() => null)
+      if (json && typeof json.bound === 'boolean') state.wb = json
+    }
+  } catch {}
+  try {
+    const v = await rpc('workspace.list', {})
+    if (v) {
+      state.wbProjects = v.items || []
+      state.wbArchived = v.archivedSessionIds || []
+    }
+  } catch {}
+  renderWorkbench()
+}
+
+function renderWorkbench() {
+  const bar = $('workbench-bar')
+  if (!bar) return
+  const label = $('wb-label')
+  const toggle = $('wb-toggle')
+  const panel = $('wb-panel')
+  const wb = state.wb
+  const bound = !!wb?.bound && !!wb?.path
+  bar.classList.toggle('bound', bound)
+  bar.classList.toggle('unbound', !bound)
+  if (!bound) {
+    label.textContent = t('wb.unbound')
+    toggle.setAttribute('aria-expanded', 'false')
+    panel.classList.add('hidden')
+    panel.innerHTML = ''
+    return
+  }
+  const title = wb.title || basenameOf(wb.path) || wb.path
+  label.textContent = t('wb.bound', { title })
+  toggle.setAttribute('aria-expanded', state.wbOpen ? 'true' : 'false')
+  panel.classList.toggle('hidden', !state.wbOpen)
+  if (!state.wbOpen) { panel.innerHTML = ''; return }
+  const root = workbenchRoot()
+  const projects = (state.wbProjects || []).filter(p => isUnder(root, p.path))
+  if (!projects.length) {
+    panel.innerHTML = '<div class="wb-empty">' + esc(t('wb.noProjects')) + '</div>'
+    return
+  }
+  panel.innerHTML = projects.map(p => {
+    const pid = p.workspaceId
+    const open = !!state.wbOpenProjects[pid]
+    const sessions = (p.sessionIds || []).map(id => state.byId.get(id)).filter(Boolean)
+    const ptitle = p.title || basenameOf(p.path) || p.path
+    const body = open ? `<div class="wb-sessions">${sessions.length ? sessions.map(s => `
+      <button class="wb-session" type="button" data-id="${esc(s.sessionId)}">
+        <span class="wb-session-title">${esc(titleOf(s))}</span>
+        <span class="wb-session-meta">${s.running ? esc(t('sessions.running')) : esc(fmtTime(s.updatedAt))}</span>
+      </button>`).join('') : `<div class="wb-empty">${esc(t('wb.noSessions'))}</div>`}</div>` : ''
+    return `<div class="wb-project ${open ? 'open' : ''}" data-wbpid="${esc(pid)}">
+      <div class="wb-project-head">
+        <span class="wb-chevron" aria-hidden="true">${open ? '▾' : '▸'}</span>
+        <span class="wb-project-title">${esc(ptitle)}</span>
+        <button class="mini-btn wb-new" type="button" data-wbnew="${esc(pid)}">${esc(t('wb.newSession'))}</button>
+      </div>
+      ${body}
+    </div>`
+  }).join('')
+}
+
+async function wbNewSession(workspaceId) {
+  const v = await safeRpc('session.create', { workspaceId }, t('home.createFailed'))
+  if (!v?.sessionId) return
+  toast(t('home.created'), 'ok')
+  await refreshSessions()
+  openSession(v.sessionId)
+}
+
 function renderSessions() {
   const list = $('session-list')
-  const items = [...state.sessions].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
-  list.innerHTML = items.map(s => {
+  const showArchived = LS.get('showArchivedV1', '0') === '1'
+  const wbRoot = workbenchRoot()
+  const inWb = (s) => !!wbRoot && isUnder(wbRoot, s.cwd)
+  const sorted = [...state.sessions].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+  const visible = sorted.filter(s => !inWb(s))                       // 工作台根目录下的会话只出现在工作台面板
+  const archivedSet = new Set(state.wbArchived || [])
+  const archived = visible.filter(s => archivedSet.has(s.sessionId))
+  const main = visible.filter(s => !archivedSet.has(s.sessionId))
+  const card = (s) => {
     const title = titleOf(s)
     const goal = goalOf(s)
     const pending = (state.approvals.some(a => a.sessionId === s.sessionId) || state.questions.some(q => q.sessionId === s.sessionId)) ? 'pending' : ''
@@ -1111,14 +1231,16 @@ function renderSessions() {
       </div>
       <span class="sc-arrow">›</span>
     </div>`
-  }).join('')
-  $('home-empty').classList.toggle('hidden', items.length > 0)
+  }
+  const divider = archived.length ? `<button class="archived-toggle" id="archived-toggle" type="button">${esc(showArchived ? t('wb.archivedShown') : t('wb.archivedHidden'))}</button>` : ''
+  list.innerHTML = main.map(card).join('') + divider + (showArchived ? archived.map(card).join('') : '')
+  $('home-empty').classList.toggle('hidden', main.length > 0 || archived.length > 0)
   const running = state.sessions.filter(s => s.running).length
   const pending = state.approvals.length + state.questions.length
   $('stat-strip').innerHTML = `
     <div class="stat running"><div class="v">${running}</div><div class="k">${t('sessions.statRunning')}</div></div>
     <div class="stat pending"><div class="v">${pending}</div><div class="k">${t('sessions.statPending')}</div></div>
-    <div class="stat ctx"><div class="v">${items.length}</div><div class="k">${t('sessions.statTotal')}</div></div>`
+    <div class="stat ctx"><div class="v">${visible.length}</div><div class="k">${t('sessions.statTotal')}</div></div>`
   updatePendingBadge()
 }
 
@@ -1678,6 +1800,12 @@ async function sendMessage() {
 function hideComposerMenu() {
   $('composer-menu').classList.add('hidden')
   $('btn-plus').classList.remove('active')
+  hidePermissionSubmenu()
+}
+
+function hidePermissionSubmenu() {
+  const sub = $('permission-submenu')
+  if (sub) sub.classList.add('hidden')
 }
 
 function toggleComposerMenu() {
@@ -3029,6 +3157,7 @@ function bindUi() {
     renderUpdateExpandBtn()
     renderServers()
     renderSessions()
+    renderWorkbench()
     renderPending(); renderQueue(); renderJobs()
     updateConn()
     if (state.current) { renderSessionTitle(); renderSessionSub(); renderSessionCards(); renderHistory(true) }
@@ -3056,8 +3185,32 @@ function bindUi() {
     b.addEventListener('click', () => showView(b.dataset.view)))
   // 会话列表点击
   $('session-list').addEventListener('click', (e) => {
+    if (e.target.closest('#archived-toggle')) {
+      LS.set('showArchivedV1', LS.get('showArchivedV1', '0') === '1' ? '0' : '1')
+      renderSessions()
+      return
+    }
     const card = e.target.closest('[data-id]')
     if (card) openSession(card.dataset.id)
+  })
+  // 工作台会话条: 已绑定才可展开
+  $('wb-toggle').addEventListener('click', () => {
+    if (!state.wb?.bound) return
+    state.wbOpen = !state.wbOpen
+    renderWorkbench()
+  })
+  // 工作台面板: 项目行展开/收起 · 新会话 · 打开会话
+  $('wb-panel').addEventListener('click', (e) => {
+    const newBtn = e.target.closest('[data-wbnew]')
+    if (newBtn) { wbNewSession(newBtn.dataset.wbnew); return }
+    const head = e.target.closest('.wb-project-head')
+    if (head) {
+      const pid = head.closest('[data-wbpid]')?.dataset.wbpid
+      if (pid) { state.wbOpenProjects[pid] = !state.wbOpenProjects[pid]; renderWorkbench() }
+      return
+    }
+    const ses = e.target.closest('[data-id]')
+    if (ses) openSession(ses.dataset.id)
   })
   $('btn-back').addEventListener('click', closeSession)
   $('btn-stats').addEventListener('click', () => { renderSessionCards(); $('modal-stats').classList.remove('hidden') })
@@ -3095,8 +3248,25 @@ function bindUi() {
   $('composer-menu').addEventListener('click', async (e) => {
     const chip = e.target.closest('[data-cmd]')
     if (chip) {
+      // /permission 弹出二级参数选择, 其他 chip 直接填入
+      if (chip.dataset.cmd === '/permission') {
+        const sub = $('permission-submenu')
+        if (sub) sub.classList.toggle('hidden', !sub.classList.contains('hidden'))
+        return
+      }
+      hidePermissionSubmenu()
       const input = $('composer-input')
       input.value = chip.dataset.cmd + ' '
+      input.focus()
+      autosize(input)
+      hideComposerMenu()
+      return
+    }
+    const perm = e.target.closest('[data-perm]')
+    if (perm) {
+      hidePermissionSubmenu()
+      const input = $('composer-input')
+      input.value = '/permission ' + perm.dataset.perm + ' '
       input.focus()
       autosize(input)
       hideComposerMenu()
@@ -3118,7 +3288,9 @@ function bindUi() {
   const input = $('composer-input')
   input.addEventListener('input', () => autosize(input))
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMessage() }
+    if (e.key !== 'Enter' || e.isComposing) return  // 组合输入一律放行(默认行为)
+    if (isMobileDevice()) return                    // 手机端: 不拦截 → textarea 默认插入换行, 发送走「发送」按钮
+    if (!e.shiftKey) { e.preventDefault(); sendMessage() }  // 桌面端: Enter=发送, Shift+Enter=换行
   })
 
   // 审批

@@ -31,6 +31,14 @@
     <!-- 会话列表 -->
     <section id="view-home" class="view">
       <div class="stat-strip" id="stat-strip"></div>
+      <!-- 工作台会话条: 未绑定=灰色不可展开; 已绑定=彩色可展开项目面板 -->
+      <div id="workbench-bar" class="workbench-bar unbound">
+        <button id="wb-toggle" class="wb-toggle" type="button" aria-expanded="false">
+          <span id="wb-label" class="wb-label" data-i18n="wb.unbound">未绑定工作台</span>
+          <span class="wb-chevron" aria-hidden="true">▾</span>
+        </button>
+        <div id="wb-panel" class="wb-panel hidden"></div>
+      </div>
       <div class="section-head">
         <span data-i18n="nav.sessions">会话</span>
         <button id="btn-new-session" class="mini-btn" data-i18n="home.newSession">＋ 新会话</button>
@@ -98,6 +106,12 @@
               <button class="menu-chip" data-cmd="/goal" data-i18n="menu.goal">/goal 设置/查看任务目标</button>
               <button class="menu-chip" data-cmd="/permission" data-i18n="menu.permission">/permission 切换权限预设</button>
               <button class="menu-chip" data-cmd="/plan" data-i18n="menu.plan">/plan 进入/退出计划模式</button>
+            </div>
+            <!-- /permission 二级参数选择: 点击 chip 展开, 选中后填入 '/permission <值> ' -->
+            <div class="menu-chips hidden" id="permission-submenu">
+              <button class="menu-chip perm-opt" data-perm="read-only" data-i18n="perm.readOnly">read-only</button>
+              <button class="menu-chip perm-opt" data-perm="workspace-write" data-i18n="perm.workspaceWrite">workspace-write</button>
+              <button class="menu-chip perm-opt" data-perm="danger-full-access" data-i18n="perm.dangerFullAccess">danger-full-access</button>
             </div>
           </div>
           <div class="menu-group hidden" id="preset-menu-group">
@@ -503,6 +517,8 @@
         'statsPage.gatewayDown': '统计需要网关运行', 'statsPage.empty': '暂无统计，产生会话后自动聚合',
         'statsPage.note': '注：本数据仅在使用 DeepSeek 官方 API 时估算；基于 token 计算，与官网账单可能有出入，一切以官网为准。统计自 2026-08-17 定价生效日起。',
         'home.newSession': '＋ 新会话', 'home.empty': '暂无会话', 'home.createFailed': '新建会话失败', 'home.created': '会话已创建',
+        'wb.unbound': '未绑定工作台', 'wb.bound': '绑定 {title}', 'wb.newSession': '新会话', 'wb.noProjects': '暂无项目', 'wb.noSessions': '暂无会话',
+        'wb.archivedHidden': '------隐藏已归档会话------', 'wb.archivedShown': '------显示已归档会话------',
         'sessions.running': '运行中', 'sessions.statRunning': '运行中', 'sessions.statPending': '待处理', 'sessions.statTotal': '会话总数',
         'sessions.queueBadge': '队列 {n}', 'sessions.goalBadge': '目标·{phase}',
         'sessions.cacheFallback': '网络不可用：显示本地缓存的会话列表',
@@ -565,6 +581,7 @@
         'menu.compact': '/compact 压缩对话历史', 'menu.export': '/export 导出会话日志 ZIP',
         'menu.feedback': '/feedback 反馈当前会话', 'menu.goal': '/goal 设置/查看任务目标',
         'menu.permission': '/permission 切换权限预设', 'menu.plan': '/plan 进入/退出计划模式',
+        'perm.readOnly': 'read-only', 'perm.workspaceWrite': 'workspace-write', 'perm.dangerFullAccess': 'danger-full-access',
         'menu.modelTitle': '模型切换', 'menu.refresh': '刷新', 'menu.modelAuto': '点开时自动加载', 'menu.effortTitle': '思考深度',
         'composer.placeholder': '给 DSH 发消息…', 'composer.send': '发送',
         'pending.title': '待处理', 'pending.count': '{n} 项', 'pending.approvalTitle': '🔧 {tool} 请求批准', 'pending.noReason': '无说明',
@@ -685,6 +702,8 @@
         'statsPage.gatewayDown': 'Stats require the gateway', 'statsPage.empty': 'No stats yet — they aggregate as sessions happen',
         'statsPage.note': 'Note: estimates assume the official DeepSeek API. Token-based calculation may differ from the official bill; always defer to deepseek.com. Stats start from the 2026-08-17 pricing date.',
         'home.newSession': '＋ New session', 'home.empty': 'No sessions yet', 'home.createFailed': 'Failed to create session', 'home.created': 'Session created',
+        'wb.unbound': 'No workbench bound', 'wb.bound': 'Bound {title}', 'wb.newSession': 'New session', 'wb.noProjects': 'No projects', 'wb.noSessions': 'No sessions',
+        'wb.archivedHidden': '------ Hide archived ------', 'wb.archivedShown': '------ Show archived ------',
         'sessions.running': 'Running', 'sessions.statRunning': 'Running', 'sessions.statPending': 'Pending', 'sessions.statTotal': 'Sessions',
         'sessions.queueBadge': 'Queue {n}', 'sessions.goalBadge': 'Goal·{phase}',
         'sessions.cacheFallback': 'Network unavailable: showing cached session list',
@@ -747,6 +766,7 @@
         'menu.compact': '/compact Compress conversation history', 'menu.export': '/export Export session log ZIP',
         'menu.feedback': '/feedback Feedback current session', 'menu.goal': '/goal Set/view task goal',
         'menu.permission': '/permission Switch permission preset', 'menu.plan': '/plan Enter/exit plan mode',
+        'perm.readOnly': 'read-only', 'perm.workspaceWrite': 'workspace-write', 'perm.dangerFullAccess': 'danger-full-access',
         'menu.modelTitle': 'Model', 'menu.refresh': 'Refresh', 'menu.modelAuto': 'Auto-loads when opened', 'menu.effortTitle': 'Reasoning effort',
         'composer.placeholder': 'Message DSH…', 'composer.send': 'Send',
         'pending.title': 'Inbox', 'pending.count': '{n} items', 'pending.approvalTitle': '🔧 {tool} requests approval', 'pending.noReason': 'No reason given',

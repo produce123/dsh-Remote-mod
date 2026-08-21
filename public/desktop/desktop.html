@@ -23,6 +23,24 @@
       <div class="ds-section-label" data-i18n="ds.sessions">会话</div>
       <div class="ds-session-list" id="session-list"></div>
       <div class="ds-sidebar-foot">
+        <div class="ds-workbench" id="workbench-box">
+          <div class="ds-wb-unbound" id="wb-unbound">
+            <span class="ds-wb-badge" data-i18n="wb.unbound">DSH Remote（未绑定）</span>
+            <button id="btn-wb-bind" class="ds-btn ds-wb-bind-btn" data-i18n="wb.bind">绑定工作台</button>
+            <span id="wb-api-hint" class="ds-wb-api-hint hidden" data-i18n="wb.apiMissing"></span>
+          </div>
+          <div class="ds-wb-bound hidden" id="wb-bound">
+            <button type="button" class="ds-wb-head" id="wb-head" aria-expanded="false" data-i18n-aria="wb.modalTitle">
+              <span class="ds-wb-caret" id="wb-caret" aria-hidden="true">▸</span>
+              <span class="ds-wb-badge ds-wb-head-text" id="wb-head-text"></span>
+            </button>
+            <div class="ds-wb-actions">
+              <button id="btn-wb-path" class="ds-mini-btn" data-i18n="wb.viewPath">已绑定 workspace</button>
+              <button id="btn-wb-unbind" class="ds-mini-btn" data-i18n="wb.unbind">解绑</button>
+            </div>
+            <div id="wb-panel" class="ds-wb-panel hidden"></div>
+          </div>
+        </div>
         <button class="ds-nav-item" data-view="view-files"><span class="ds-nav-ico">⇅</span><span data-i18n="ds.files">文件传输</span></button>
         <button class="ds-nav-item" data-view="view-settings"><span class="ds-nav-ico">⚙</span><span data-i18n="ds.settings">设置</span></button>
         <div class="ds-feedback">
@@ -279,6 +297,29 @@
       </div>
       <div class="ds-modal-actions">
         <button id="btn-presets-close" class="ds-btn" data-i18n="ds.close">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 工作台绑定弹窗 -->
+  <div id="modal-workbench" class="ds-modal hidden">
+    <div class="ds-modal-card">
+      <div class="ds-modal-title" data-i18n="wb.modalTitle">绑定工作台</div>
+      <div class="ds-modal-body">
+        <div class="ds-wb-modal-desc" data-i18n="wb.modalDesc">选择工作台根目录（其下每个子文件夹会自动成为项目工作区）</div>
+        <div class="ds-wb-fsbar">
+          <button id="wb-fs-up" class="ds-btn" data-i18n="wb.up">上级</button>
+          <button id="wb-fs-home" class="ds-btn" data-i18n="wb.home">根目录</button>
+          <span id="wb-fs-path" class="ds-wb-fs-path">…</span>
+        </div>
+        <div id="wb-fs-list" class="ds-wb-fs-list"></div>
+        <div class="ds-wb-manual">
+          <input id="wb-path-input" type="text" autocomplete="off" spellcheck="false" data-i18n-placeholder="wb.pathPlaceholder" placeholder="或手动输入绝对路径…">
+          <button id="btn-wb-bind-manual" class="ds-btn primary" data-i18n="wb.bind">绑定工作台</button>
+        </div>
+      </div>
+      <div class="ds-modal-actions">
+        <button id="btn-wb-modal-close" class="ds-btn" data-i18n="ds.close">关闭</button>
       </div>
     </div>
   </div>
