@@ -83,12 +83,14 @@ const MIME = {
 }
 
 // ---------- /fs 文件传输 ----------
-// 允许访问的根目录: DSH_REMOTE_FS_ROOT 用 ':' 分隔多个根, 默认仅 ~。
-// 注意: Windows 上默认 home 路径含盘符 (C:\), 不能对默认值做 ':' split,
-// 否则盘符被切开导致 /fs/list 初始路径 404。只有显式设置 DSH_REMOTE_FS_ROOT 时才按 ':' 分隔。
+// 允许访问的根目录: DSH_REMOTE_FS_ROOT 可指定多个根, 默认仅 ~。
+// 多个根的分隔符按平台惯例: Windows 用 ';'(盘符含 ':' 不能用 ':' 切), POSIX 用 ':'。
+// 所有 /fs/* 路径 resolve 后都必须位于某个根内, 已存在的路径还会用 realpath
+// 复核一次, 防止 ../ 穿越与符号链接逃逸。
 const FS_DEFAULT_ROOT = path.resolve(os.homedir())
+const FS_PATH_LIST_SEP = process.platform === 'win32' ? ';' : ':'
 const FS_ROOTS = (process.env.DSH_REMOTE_FS_ROOT
-  ? process.env.DSH_REMOTE_FS_ROOT.split(':')
+  ? process.env.DSH_REMOTE_FS_ROOT.split(FS_PATH_LIST_SEP)
   : [FS_DEFAULT_ROOT])
   .filter(Boolean)
   .map(r => path.resolve(r.trim() === '~' ? FS_DEFAULT_ROOT : r.trim()))
@@ -1649,6 +1651,10 @@ function serveWorkbench(req, res, url) {
         let real
         try { real = fs.realpathSync(abs) } catch (err) {
           return fsJson(res, 400, { error: err.code === 'ENOENT' ? 'not-found' : 'permission-denied' })
+        }
+        // 工作台绑定目录必须在 /fs 允许根内: 目录浏览/自动收养依赖 /fs/list, 根外绑定会静默失败
+        if (!fsInsideReal(real)) {
+          return fsJson(res, 400, { error: 'outside-roots', detail: '绑定目录必须在文件传输允许根目录内' })
         }
         saveWorkbench({ path: real })
         fsJson(res, 200, { bound: true, path: real, title: path.basename(real) })

@@ -1110,12 +1110,14 @@ function workbenchRoot() {
   if (!state.wb?.bound || !state.wb.path) return null
   return String(state.wb.path).toLowerCase().replace(/[\\/]+$/, '')
 }
-/** Windows 风格 case-insensitive 前缀匹配: p 是否严格位于 root 之下(不含 root 本身)。 */
+/** Windows 风格 case-insensitive 前缀匹配: p 是否严格位于 root 之下(不含 root 本身)。/ 与 \ 统一按 \ 归一化。 */
 function isUnder(root, p) {
   if (!root || !p) return false
-  const pp = String(p).toLowerCase().replace(/[\\/]+$/, '')
-  if (pp === root) return false
-  return pp.startsWith(root + '\\') || pp.startsWith(root + '/')
+  const norm = (s) => String(s).toLowerCase().replace(/[\\/]+$/, '').replace(/\//g, '\\')
+  const rr = norm(root)
+  const pp = norm(p)
+  if (!rr || pp === rr) return false
+  return pp.startsWith(rr + '\\')
 }
 
 /** 刷新工作台数据: GET /workbench + workspace.list。失败静默, 保持上次状态。 */
@@ -1205,7 +1207,10 @@ function renderSessions() {
   const list = $('session-list')
   const showArchived = LS.get('showArchivedV1', '0') === '1'
   const wbRoot = workbenchRoot()
-  const inWb = (s) => !!wbRoot && isUnder(wbRoot, s.cwd)
+  // 工作台项目下的会话(cwd 在根内 或 已归属某项目 workspace)只出现在工作台面板, 扁平列表隐藏
+  const wbSessionIds = new Set()
+  for (const w of (state.wbProjects || [])) for (const id of (w.sessionIds || [])) wbSessionIds.add(id)
+  const inWb = (s) => (!!wbRoot && isUnder(wbRoot, s.cwd)) || wbSessionIds.has(s.sessionId)
   const sorted = [...state.sessions].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
   const visible = sorted.filter(s => !inWb(s))                       // 工作台根目录下的会话只出现在工作台面板
   const archivedSet = new Set(state.wbArchived || [])
