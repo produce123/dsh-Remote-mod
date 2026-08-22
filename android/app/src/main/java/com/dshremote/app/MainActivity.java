@@ -131,6 +131,74 @@ public class MainActivity extends BridgeActivity {
       return name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
     }
 
+    /** 下载 SenseVoice-Small 离线语言包到 App 私有目录(零依赖: HttpURLConnection 系统 API)。
+     *  进度经 window.__offlinePackBridge({type:'progress'|'done'|'error', ...}) 回传 JS。 */
+    @JavascriptInterface
+    public void downloadOfflinePack(String url, String fileName) {
+      if (url == null || url.isEmpty()) return;
+      final String safeName = safeFileName(fileName == null || fileName.trim().isEmpty() ? "sensevoice-small.zip" : fileName);
+      new Thread(() -> {
+        try {
+          File dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+          if (dir == null) throw new IllegalStateException("app private dir unavailable");
+          File packDir = new File(dir, "dsh-remote-offline");
+          if (!packDir.exists() && !packDir.mkdirs()) throw new IllegalStateException("mkdir failed");
+          final File target = new File(packDir, safeName);
+          HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+          conn.setConnectTimeout(15000);
+          conn.setReadTimeout(30000);
+          conn.setInstanceFollowRedirects(true);
+          conn.setRequestProperty("User-Agent", "dsh-remote/" + getPackageName());
+          try {
+            int status = conn.getResponseCode();
+            if (status < 200 || status >= 300) throw new IllegalStateException("HTTP " + status);
+            long total = conn.getContentLengthLong();
+            try (InputStream in = conn.getInputStream(); FileOutputStream out = new FileOutputStream(target)) {
+              byte[] buf = new byte[65536];
+              int n, written = 0;
+              long lastEmit = 0;
+              while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+                written += n;
+                long now = System.currentTimeMillis();
+                if (now - lastEmit > 250 && total > 0) {
+                  lastEmit = now;
+                  sendOfflineEvent("progress", String.valueOf(Math.min(99, Math.round(written * 100f / total))), "");
+                }
+              }
+            }
+            if (target.length() < 1024) throw new IllegalStateException("downloaded content too small");
+            sendOfflineEvent("done", String.valueOf(target.length()), target.getAbsolutePath());
+          } finally {
+            conn.disconnect();
+          }
+        } catch (Exception e) {
+          String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+          sendOfflineEvent("error", "", msg);
+        }
+      }).start();
+    }
+
+    /** 离线包下载进度/结果回传 JS(主线程 evaluateJavascript, 与语音桥同一模式)。 */
+    private void sendOfflineEvent(String type, String value, String extra) {
+      try {
+        JSONObject o = new JSONObject();
+        o.put("type", type);
+        o.put("value", value == null ? "" : value);
+        o.put("extra", extra == null ? "" : extra);
+        String js = "window.__offlinePackBridge && window.__offlinePackBridge(" + o.toString() + ")";
+        js = js.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029");
+        final String code = js;
+        main.post(() -> {
+          try {
+            bridge.getWebView().evaluateJavascript(code, null);
+          } catch (Throwable ignored) {
+          }
+        });
+      } catch (Throwable ignored) {
+      }
+    }
+
     @JavascriptInterface
     public void downloadAndInstall(String url) {
       if (url == null || url.isEmpty()) return;
@@ -254,6 +322,8 @@ public class MainActivity extends BridgeActivity {
     // 授权回调后只有 pendingStart 仍为 true 才真正启动, 避免"按一下松手后授权回来才识别"的孤儿会话。
     private boolean pendingStart = false;
     private boolean retriedError9 = false;
+    // RMS 实时波形节流(约 10 次/秒), 避免刷爆 evaluateJavascript
+    private long lastRmsAt = 0;
 
     @JavascriptInterface
     public boolean isAvailable() {
@@ -351,7 +421,14 @@ public class MainActivity extends BridgeActivity {
         recognizer.setRecognitionListener(new RecognitionListener() {
           @Override public void onReadyForSpeech(Bundle params) {}
           @Override public void onBeginningOfSpeech() {}
-          @Override public void onRmsChanged(float rmsdB) {}
+          @Override public void onRmsChanged(float rmsdB) {
+            // 实时音量 → JS 波形动画(归一化 0~1, 节流 ~10 次/秒)
+            long now = System.currentTimeMillis();
+            if (now - lastRmsAt < 100) return;
+            lastRmsAt = now;
+            float level = Math.max(0f, Math.min(1f, rmsdB / 10f));
+            sendEvent("rms", String.valueOf(level), "");
+          }
           @Override public void onBufferReceived(byte[] buffer) {}
           @Override public void onEndOfSpeech() {}
           @Override public void onError(int error) {

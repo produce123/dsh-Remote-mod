@@ -236,6 +236,22 @@
               <div><div class="ds-setting-name" data-i18n="ds.donate">赞赏支持</div><div class="ds-setting-desc" data-i18n="ds.donateDesc">如果 dsh-remote 帮到了你，欢迎赞赏支持开发 ☕</div></div>
               <span class="ds-setting-arrow" aria-hidden="true">›</span>
             </div>
+            <div class="ds-linkcheck">
+              <div class="ds-linkcheck-head">
+                <div>
+                  <div class="ds-setting-name" data-i18n="ds.linkCheck">系统链路检测</div>
+                  <div class="ds-setting-desc" id="linkcheck-summary">—</div>
+                  <div class="ds-setting-desc" id="linkcheck-detail"></div>
+                </div>
+                <button id="btn-linkcheck-refresh" class="ds-btn" data-i18n="ds.refreshLinkCheck">刷新</button>
+              </div>
+              <div class="ds-linkcheck-grid">
+                <div class="ds-linkcheck-item" data-linkcheck="gateway"><i></i><span data-i18n="ds.linkGateway">网关</span><b>—</b></div>
+                <div class="ds-linkcheck-item" data-linkcheck="dsh"><i></i><span data-i18n="ds.linkDsh">DSH 上游</span><b>—</b></div>
+                <div class="ds-linkcheck-item" data-linkcheck="mux"><i></i><span data-i18n="ds.linkMux">实时 mux</span><b>—</b></div>
+                <div class="ds-linkcheck-item" data-linkcheck="host"><i></i><span data-i18n="ds.linkHost">实时 host</span><b>—</b></div>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -480,6 +496,11 @@
         'models.switchFailed': '切换模型失败', 'models.switched': '已切换模型：{model}',
         'models.effortFailed': '切换思考深度失败', 'models.effortSwitched': '思考深度：{effort}',
         'menu.modelTitle': '模型切换', 'menu.effortTitle': '思考深度',
+        'ds.linkCheck': '系统链路检测', 'ds.refreshLinkCheck': '刷新',
+        'ds.linkGateway': '网关', 'ds.linkDsh': 'DSH 上游', 'ds.linkMux': '实时 mux', 'ds.linkHost': '实时 host',
+        'ds.linkOnline': '在线', 'ds.linkOffline': '离线',
+        'ds.linkAllOk': '全部链路在线', 'ds.linkPartial': '{n}/4 个模块在线', 'ds.linkGatewayDown': '网关不可达',
+        'ds.linkDetail': '网关 v{version} · DSH {upstream}',
       },
       en: {
         'ds.repo': 'GitHub repo', 'ds.newSession': '+ New session', 'ds.newWorkspace': 'New workspace', 'ds.sessions': 'Sessions',
@@ -577,6 +598,11 @@
         'models.switchFailed': 'Model switch failed', 'models.switched': 'Switched model: {model}',
         'models.effortFailed': 'Failed to switch reasoning effort', 'models.effortSwitched': 'Reasoning effort: {effort}',
         'menu.modelTitle': 'Model', 'menu.effortTitle': 'Reasoning effort',
+        'ds.linkCheck': 'System link check', 'ds.refreshLinkCheck': 'Refresh',
+        'ds.linkGateway': 'Gateway', 'ds.linkDsh': 'DSH upstream', 'ds.linkMux': 'Live mux', 'ds.linkHost': 'Live host',
+        'ds.linkOnline': 'Online', 'ds.linkOffline': 'Offline',
+        'ds.linkAllOk': 'All links online', 'ds.linkPartial': '{n}/4 components online', 'ds.linkGatewayDown': 'Gateway unreachable',
+        'ds.linkDetail': 'Gateway v{version} · DSH {upstream}',
       }
     }
   </script>

@@ -16,6 +16,7 @@
  *   PORT        监听端口, 默认 8787
  *   HOST        监听地址, 默认 0.0.0.0
  *   DSH_UPSTREAM  DSH web 服务地址, 默认 http://127.0.0.1:3080
+ *   DSH_HEALTH_PATH   DSH 健康探测路径(可逗号分隔多候选), 默认 /healthz,/(按序探测, 首个 2xx 即上游可达)
  *   TOKEN       访问令牌; 不设置则读 TOKEN_FILE, 仍没有则自动生成
  *   TOKEN_FILE  令牌文件, 默认 ~/.dsh-remote/token
  *   DSH_REMOTE_FS_ROOT       文件传输允许根, 默认 ~, 使用系统路径分隔符配置多根
@@ -189,8 +190,9 @@ function authorized(req, url) {
 // ---------- 设备监控 ----------
 const devices = new Map()   // ip -> device
 // 设备 TTL 是“记录保留时间”，和下方 online 判断的 60s 活跃窗口是两回事：
-// online 只看最近 60s 是否有请求；TTL 用于防止长期运行的网关内存/响应无限膨胀。
-const DEVICE_TTL_MS = 24 * 60 * 60 * 1000
+// online 只看最近 60s 是否有请求；TTL 防止长期运行/换网后离线幽灵记录无限残留。
+// 6h: 比 24h 更快清掉离线幽灵, 用户不易误读为"多台设备"(在线判定窗口仍为 60s)。
+const DEVICE_TTL_MS = 6 * 60 * 60 * 1000
 let totalRequests = 0
 let authFailures = 0
 
@@ -212,7 +214,11 @@ function saveNotes(notes) {
 const deviceNotes = loadNotes()
 
 function ipOf(req) {
-  return String(req.socket?.remoteAddress || '').replace(/^::ffff:/, '') || 'unknown'
+  let ip = String(req.socket?.remoteAddress || '').replace(/^::ffff:/, '')
+  // IPv6 回环(::1)归一为 127.0.0.1: 同一台机器用 localhost 与 127.0.0.1 访问会因
+  // 双栈拆成两条设备记录, 归一后合并为一条(设备表按 IP 聚合的补充)。
+  if (ip === '::1') ip = '127.0.0.1'
+  return ip || 'unknown'
 }
 
 function kindOf(req) {
@@ -251,6 +257,9 @@ function touchDevice(req, extra = {}) {
 
 function deviceViews() {
   return [...devices.values()]
+    // 管理页自身(kind=admin)不计入"已连接设备": 它只是轮询状态/展示管理界面,
+    // 不应与手机 App/浏览器控制台并列计数(用户看到的"多出来的设备"即由此类行造成)。
+    .filter(d => d.kind !== 'admin')
     .map(d => ({
       ip: d.ip,
       note: deviceNotes[d.ip] || '',
@@ -488,7 +497,9 @@ async function serveDshControl(req, res, url) {
     res.end(JSON.stringify({ error: 'unauthorized' }))
     return
   }
-  touchDevice(req, { kind: 'admin' })
+  touchDevice(req) // kind 按请求自身判定(app/web/browser), 不再强制 admin:
+  // 手机 App 的 DSH 远程控制也会打到本端点, 强制标记 admin 会让整台手机被当作
+  // "管理页"——显示上被过滤掉、令牌轮换踢出时被豁免(旧 token WS 存活, 安全漏洞)。
   if (req.method === 'GET') {
     cors(res)
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
@@ -880,7 +891,8 @@ function serveStatic(req, res, url) {
     return
   }
   if (pathname === '/') pathname = '/index.html'
-  if (pathname === '/admin') pathname = '/admin.html'
+  // 管理页统一入口: 兼容 /admin、/admin/、/admin/index.html 三种访问形态(插件 /remote/admin* 也重定向到这里)
+  if (pathname === '/admin' || pathname === '/admin/' || pathname === '/admin/index.html') pathname = '/admin.html'
   // 兼容旧版 App(版本比较不认 -rc): 无 local 参数的请求把 0.5.2-rc.1 显示为 0.5.2,
   // 引导升级到新 APK; 新 App 带 ?local= 拿到真实 rc 版本, 不会循环提示。
   if (pathname === '/update.json') {
@@ -965,6 +977,8 @@ function serveAdminApi(req, res, url) {
       return
     }
     upstreamReachable((reachable) => {
+      // 计数与列表同源(都过滤 kind=admin 管理页行), 保证"在线/累计"与表格一致
+      const devs = deviceViews()
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({
         ok: true,
@@ -992,9 +1006,9 @@ function serveAdminApi(req, res, url) {
         tokenLength: TOKEN.length,
         totalRequests,
         authFailures,
-        deviceCount: devices.size,
-        onlineCount: [...devices.values()].filter(d => Date.now() - d.lastSeen < 60_000).length,
-        devices: deviceViews()
+        deviceCount: devs.length,
+        onlineCount: devs.filter(d => d.online).length,
+        devices: devs
       }))
     })
     return
@@ -1930,17 +1944,30 @@ function proxyApi(req, res, url) {
 }
 
 // ---------- 其它 ----------
-async function serveHealth(res) {
-  let upstreamOk = false
-  try {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), 2000)
-    const probe = await fetch(UPSTREAM.origin + '/healthz', { signal: ctrl.signal, cache: 'no-store' })
-    clearTimeout(timer)
-    upstreamOk = probe.ok
-  } catch {
-    upstreamOk = false
+// DSH 健康探测候选路径: DSH_HEALTH_PATH 环境变量可覆盖(逗号分隔多候选);
+// 默认按序探测 /healthz(旧版 DSH 的权威端点)与根路径 /(新版 DSH 已移除 /healthz,
+// 根路径 200 即视为上游可达), 任一 2xx 即 upstreamOk=true, 避免 upstreamOk 误报为 false
+// 导致插件 ensureGateway 反复杀启网关 + 桌面端链路检测误报"网关异常"。
+const DEFAULT_HEALTH_PATHS = ['/healthz', '/']
+const HEALTH_PATHS = (() => {
+  const raw = String(process.env.DSH_HEALTH_PATH || '').trim()
+  if (!raw) return DEFAULT_HEALTH_PATHS
+  return raw.split(',').map(s => s.trim()).filter(Boolean)
+})()
+async function probeUpstreamOk() {
+  for (const p of HEALTH_PATHS) {
+    try {
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), 1500)
+      const probe = await fetch(UPSTREAM.origin + p, { signal: ctrl.signal, cache: 'no-store' })
+      clearTimeout(timer)
+      if (probe.ok) return true
+    } catch {}
   }
+  return false
+}
+async function serveHealth(res) {
+  const upstreamOk = await probeUpstreamOk()
   cors(res)
   res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
   res.end(JSON.stringify({
@@ -1949,6 +1976,7 @@ async function serveHealth(res) {
     version: VERSION,
     pid: process.pid,
     upstream: UPSTREAM.origin,
+    upstreamProbe: HEALTH_PATHS.join(','),
     upstreamOk,
     events: eventCollectorState,
   }))

@@ -1,6 +1,7 @@
 /* dsh-remote 插件 client half
  * 注册进 DSH 原生左侧边栏 footer(与 OpenBiliClaw 上下并列) + 右侧 shell.overlay 抽屉。
- * 抽屉内 iframe 懒加载 /remote/admin/ —— 即本地网关管理控制台的桌面 UI。
+ * 抽屉内 iframe 懒加载 /remote/admin/?embedded=1 —— 插件侧 302 重定向到独立网关管理页
+ * (http://127.0.0.1:PORT/admin?token=...&embedded=1), 管理界面统一由网关托管。
  * 产物入库, 无构建步骤; 参考 @openbiliclaw/dsh-plugin 的官方 slot 注册模式。
  */
 window.__ModuleLoader__.load({
@@ -67,11 +68,14 @@ window.__ModuleLoader__.load({
     function Drawer(props) {
       var open = props.useStore(function (s) { return s.open })
       var loaded = React.useRef(false)
+      var iframeRef = React.useRef(null)
       if (open) loaded.current = true
-      // 管理页里的「收起面板」通过 postMessage 请求父窗口关闭抽屉
+      // 管理页里的「收起面板」通过 postMessage 请求父窗口关闭抽屉。
+      // 管理页已重定向到独立网关(跨源 http://127.0.0.1:PORT), 无法再按 origin 判断,
+      // 只接受来自抽屉内 iframe 自身的消息(e.source 校验)。
       React.useEffect(function () {
         function onMsg(e) {
-          if (e.origin !== location.origin) return
+          if (iframeRef.current && e.source !== iframeRef.current.contentWindow) return
           var d = e.data
           if (d && d.source === 'dsh-remote-admin' && d.type === 'close') props.actions.close()
         }
@@ -83,6 +87,7 @@ window.__ModuleLoader__.load({
         style: Object.assign({}, DRAWER_STYLE, { transform: open ? 'translateX(0)' : 'translateX(102%)' }),
       },
         loaded.current ? React.createElement('iframe', {
+          ref: iframeRef,
           src: '/remote/admin/?embedded=1',
           title: 'DSH Remote',
           sandbox: 'allow-scripts allow-same-origin allow-forms allow-modals allow-popups',

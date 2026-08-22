@@ -79,11 +79,6 @@
     .token-row code { flex: none; width: 100%; background: var(--dsr-bg); border: 1px solid var(--dsr-line); border-radius: 8px; padding: 8px 10px; font-size: 12px; white-space: nowrap; overflow-x: auto; }
     .token-actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .token-actions .mini-btn { flex: 1 1 auto; text-align: center; padding: 6px 8px; font-size: 12.5px; }
-    .gateway-port-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; padding: 10px 12px; background: var(--dsr-panel); border: 1px solid var(--dsr-line); border-radius: var(--dsr-radius); }
-    .gateway-port-row label { font-size: 12px; color: var(--dsr-muted); flex: none; }
-    .gateway-port-row input { width: 92px; background: var(--dsr-bg); color: var(--dsr-text); border: 1px solid var(--dsr-line); border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 13px; outline: none; }
-    .gateway-port-row .muted { font-size: 12px; }
-    .gateway-port-row .mini-btn { margin-left: auto; }
     .conn-badge { white-space: nowrap; }
     #btn-close-drawer { white-space: nowrap; }
     @media (max-width: 720px) {
@@ -226,19 +221,11 @@
       <div class="token-row">
         <code id="token-full">—</code>
         <div class="token-actions">
-          <button id="btn-gateway" class="mini-btn hidden" data-i18n="startGateway">启动网关</button>
           <button id="btn-qr" class="mini-btn hidden" data-i18n="qrCode">二维码</button>
           <button id="btn-rotate" class="mini-btn hidden" data-i18n="rotateToken">轮换令牌</button>
           <button id="btn-copy" class="mini-btn" data-i18n="copyToken">复制令牌</button>
           <button id="btn-logout" class="mini-btn" data-i18n="signOut">退出</button>
         </div>
-      </div>
-
-      <div id="gateway-port-row" class="gateway-port-row hidden">
-        <label data-i18n="gatewayPort">网关端口</label>
-        <input id="gateway-port-input" type="number" min="1" max="65535" inputmode="numeric" placeholder="8787">
-        <span id="gateway-port-current" class="muted">—</span>
-        <button id="btn-save-port" class="mini-btn" data-i18n="savePort">保存</button>
       </div>
 
       <div id="pair-box" class="pair-box hidden">
@@ -315,18 +302,6 @@
         'unauth': '未认证',
         'tokenPlaceholder': '输入网关访问令牌',
         'enter': '进入',
-        'startGateway': '启动网关',
-        'stopGateway': '停止网关',
-        'starting': '启动中…',
-        'stopping': '停止中…',
-        'gatewayPort': '网关端口',
-        'gatewayPort.current': '当前 {port}',
-        'savePort': '保存',
-        'toast.portInvalid': '端口必须是 1-65535 的整数',
-        'toast.portSaved': '端口已更新，网关已切换至 {port}',
-        'toast.portSavedIdle': '端口已保存，网关未运行，下次启动生效',
-        'toast.portEnv': '环境变量优先，当前仍使用 {port}',
-        'toast.portFailedMsg': '端口保存失败：{msg}',
         'qrCode': '二维码',
         'rotateToken': '轮换令牌',
         'copyToken': '复制令牌',
@@ -336,15 +311,15 @@
         'noDevices': '暂无设备记录',
         'th.status': '状态', 'th.name': '名称', 'th.type': '类型', 'th.ip': 'IP',
         'th.channels': '通道', 'th.requests': '请求', 'th.lastSeen': '最后活跃', 'th.ua': 'UA',
-        'badge.embedded': '内嵌', 'badge.gateway': '网关', 'badge.connected': '已连接',
+        'badge.gateway': '网关',
         'badge.gateway.title': '新标签页打开网关管理面板', 'badge.gatewayDown': '网关未运行',
-        'token.pluginNoGateway': '插件模式 · 未接网关, 无需令牌', 'token.unavailable': '未获取到令牌',
+        'token.unavailable': '未获取到令牌',
         'toast.tokenInvalid': '令牌无效', 'toast.connFailed': '连接失败',
-        'stat.pluginVersion': '插件版本', 'stat.gatewayVersion': '网关版本',
+        'stat.gatewayVersion': '网关版本',
         'stat.updateAvailable': '{version} 可用', 'stat.currentV': '当前 v{version}',
-        'stat.download': '去下载', 'stat.embedded': 'DSH 内嵌 · 免网关',
+        'stat.download': '去下载',
         'stat.updateCheck': '更新检查: {error}', 'stat.latest': '已是最新(来源检查)', 'stat.notChecked': '未检查更新',
-        'stat.hostIP': '主机 IP · {hostname}', 'stat.ipSep': '、', 'stat.phoneGateway': ' (手机连 {port} 网关)', 'stat.phoneThis': ' (手机连这个地址)',
+        'stat.hostIP': '主机 IP · {hostname}', 'stat.ipSep': '、', 'stat.phoneThis': ' (手机连这个地址)',
         'stat.reachable': '可达', 'stat.unreachable': '不可达', 'stat.dshUpstream': 'DSH 上游 {url}',
         'stat.devicesOnline': '设备在线 / 累计', 'stat.totalRequests': '总请求数', 'stat.authFailures': '认证失败',
         'stat.uptime': '运行时长 · {host}:{port}',
@@ -361,13 +336,7 @@
         'stats.gatewayDown': '统计需要网关运行', 'stats.empty': '暂无统计，产生会话后自动聚合',
         'stats.note': '注：本数据仅在使用 DeepSeek 官方 API 时估算；基于 token 计算，与官网账单可能有出入，一切以官网为准。统计自 2026-08-17 定价生效日起。',
         'unit.sec': ' 秒', 'unit.min': ' 分钟', 'unit.hour': ' 小时 ', 'unit.minShort': ' 分', 'unit.day': ' 天 ',
-        'device.installedNotRunning': '网关已安装 · 当前未运行', 'device.noGatewayBinary': '未检测到网关程序',
         'device.ipRefresh': '{n} 个 IP · 每 5 秒刷新',
-        'device.downloadApp': '下载手机 App', 'device.downloadGateway': '下载网关 ({os})',
-        'device.noBinaryGuide': '本插件包未包含网关程序：下载对应系统的网关并运行',
-        'device.afterRunGuide': '运行网关后回到本页刷新，即可看到设备监控与完整令牌',
-        'device.installedGuide': '网关已随插件安装，当前未运行 — 点击上方「启动网关」开启',
-        'device.afterStartGuide': '启动后本页会自动刷新为网关模式（完整设备监控 + 令牌）',
         'device.kind.app': '手机App', 'device.kind.admin': '管理页', 'device.kind.web': '浏览器', 'device.kind.unknown': '未知',
         'device.online': '在线', 'device.offline': '离线', 'device.note': '备注', 'device.kick': '断开',
         'prompt.note': '给 {ip} 设置备注（留空清除）：', 'toast.noteSaved': '备注已保存', 'toast.noteFailed': '保存失败',
@@ -377,8 +346,6 @@
         'confirm.rotate': '轮换后旧令牌立即失效，手机与浏览器都需要重新扫码/输入。继续？',
         'toast.rotated': '令牌已轮换，请重新给设备配对', 'toast.rotateFailed': '轮换失败',
         'toast.rotateFailedMsg': '轮换失败：{msg}',
-        'toast.gatewayStarted': '网关已启动', 'toast.gatewayAlready': '网关已在运行', 'toast.gatewayStopped': '网关已停止',
-        'toast.gatewayPending': '网关启动中，稍后刷新', 'toast.done': '已执行',
         'toast.opFailedMsg': '操作失败：{msg}',
         'pair.hint': '{base} · App「设置 → 扫码连接」，或系统相机扫一扫自动打开 App',
         'pair.failed': '二维码生成失败',
@@ -398,18 +365,6 @@
         'unauth': 'Not connected',
         'tokenPlaceholder': 'Gateway access token',
         'enter': 'Enter',
-        'startGateway': 'Start gateway',
-        'stopGateway': 'Stop gateway',
-        'starting': 'Starting…',
-        'stopping': 'Stopping…',
-        'gatewayPort': 'Gateway port',
-        'gatewayPort.current': 'Current {port}',
-        'savePort': 'Save',
-        'toast.portInvalid': 'Port must be an integer from 1 to 65535',
-        'toast.portSaved': 'Port updated, gateway switched to {port}',
-        'toast.portSavedIdle': 'Port saved; gateway not running, takes effect on next start',
-        'toast.portEnv': 'Environment variable takes priority, current port remains {port}',
-        'toast.portFailedMsg': 'Failed to save port: {msg}',
         'qrCode': 'QR code',
         'rotateToken': 'Rotate token',
         'copyToken': 'Copy token',
@@ -419,15 +374,15 @@
         'noDevices': 'No devices yet',
         'th.status': 'Status', 'th.name': 'Name', 'th.type': 'Type', 'th.ip': 'IP',
         'th.channels': 'Channels', 'th.requests': 'Requests', 'th.lastSeen': 'Last seen', 'th.ua': 'UA',
-        'badge.embedded': 'Embedded', 'badge.gateway': 'Gateway', 'badge.connected': 'Connected',
+        'badge.gateway': 'Gateway',
         'badge.gateway.title': 'Open gateway admin in a new tab', 'badge.gatewayDown': 'Gateway not running',
-        'token.pluginNoGateway': 'Plugin mode · no gateway, no token needed', 'token.unavailable': 'Token unavailable',
+        'token.unavailable': 'Token unavailable',
         'toast.tokenInvalid': 'Invalid token', 'toast.connFailed': 'Connection failed',
-        'stat.pluginVersion': 'Plugin version', 'stat.gatewayVersion': 'Gateway version',
+        'stat.gatewayVersion': 'Gateway version',
         'stat.updateAvailable': 'v{version} available', 'stat.currentV': 'Current v{version}',
-        'stat.download': 'Download', 'stat.embedded': 'Embedded in DSH · no gateway',
+        'stat.download': 'Download',
         'stat.updateCheck': 'Update check: {error}', 'stat.latest': 'Up to date (source check)', 'stat.notChecked': 'Not checked',
-        'stat.hostIP': 'Host IP · {hostname}', 'stat.ipSep': ', ', 'stat.phoneGateway': ' (phone connects to gateway {port})', 'stat.phoneThis': ' (phone connects to this address)',
+        'stat.hostIP': 'Host IP · {hostname}', 'stat.ipSep': ', ', 'stat.phoneThis': ' (phone connects to this address)',
         'stat.reachable': 'Reachable', 'stat.unreachable': 'Unreachable', 'stat.dshUpstream': 'DSH upstream {url}',
         'stat.devicesOnline': 'Devices online / total', 'stat.totalRequests': 'Total requests', 'stat.authFailures': 'Auth failures',
         'stat.uptime': 'Uptime · {host}:{port}',
@@ -444,13 +399,7 @@
         'stats.gatewayDown': 'Stats require the gateway to be running', 'stats.empty': 'No stats yet — they aggregate as sessions happen',
         'stats.note': 'Note: estimates assume the official DeepSeek API. Token-based calculation may differ from the official bill; always defer to deepseek.com. Stats start from the 2026-08-17 pricing date.',
         'unit.sec': 's', 'unit.min': 'min', 'unit.hour': 'h ', 'unit.minShort': 'm', 'unit.day': 'd ',
-        'device.installedNotRunning': 'Gateway installed · not running', 'device.noGatewayBinary': 'Gateway binary not found',
         'device.ipRefresh': '{n} IPs · refreshed every 5s',
-        'device.downloadApp': 'Download mobile app', 'device.downloadGateway': 'Download gateway ({os})',
-        'device.noBinaryGuide': 'This plugin package does not include the gateway binary: download and run the gateway for your OS',
-        'device.afterRunGuide': 'After starting the gateway, come back and refresh this page to see device monitoring and the full token',
-        'device.installedGuide': 'The gateway is installed with the plugin but not running — click "Start gateway" above',
-        'device.afterStartGuide': 'After startup this page refreshes into gateway mode (full device monitoring + token)',
         'device.kind.app': 'App', 'device.kind.admin': 'Admin', 'device.kind.web': 'Browser', 'device.kind.unknown': 'Unknown',
         'device.online': 'Online', 'device.offline': 'Offline', 'device.note': 'Note', 'device.kick': 'Kick',
         'prompt.note': 'Set note for {ip} (empty to clear):', 'toast.noteSaved': 'Note saved', 'toast.noteFailed': 'Save failed',
@@ -460,8 +409,6 @@
         'confirm.rotate': 'After rotation the old token is invalid immediately. Phones and browsers must re-scan / re-enter. Continue?',
         'toast.rotated': 'Token rotated, re-pair your devices', 'toast.rotateFailed': 'Rotate failed',
         'toast.rotateFailedMsg': 'Rotate failed: {msg}',
-        'toast.gatewayStarted': 'Gateway started', 'toast.gatewayAlready': 'Gateway already running', 'toast.gatewayStopped': 'Gateway stopped',
-        'toast.gatewayPending': 'Gateway starting, refresh later', 'toast.done': 'Done',
         'toast.opFailedMsg': 'Operation failed: {msg}',
         'pair.hint': '{base} · App "Settings → Scan to connect", or scan with the system camera to open the App',
         'pair.failed': 'QR generation failed',

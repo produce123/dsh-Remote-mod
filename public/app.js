@@ -1903,6 +1903,158 @@ async function sendMessage() {
   if (await sendSessionText(text)) { input.value = ''; autosize(input) }
 }
 
+/* ---------------- 图片消息(相机 / 相册多选) ----------------
+ * 通道: session.prompt content 块 [{type:'image', mediaType, data, name?}]
+ * (DSH 端 sessionPromptRequestSchema 校验 image 块, mediaType 限 png/jpeg/webp/gif)。 */
+const ALBUM_MAX = 9          // 单次最多选择张数
+const IMG_MAX_SIDE = 1600    // 发送前等比缩到最大边, 控制 base64 体积
+const albumState = { items: [], selected: new Set(), cameraIntent: false }
+
+/** 把 File/Blob 读成 dataURL; 超尺寸用 canvas 等比缩小并转 jpeg/webp 控制体积。 */
+async function fileToImageDataUrl(file, maxSide = IMG_MAX_SIDE) {
+  const raw = await new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result || ''))
+    r.onerror = () => reject(new Error('read-failed'))
+    r.readAsDataURL(file)
+  })
+  return downscaleImageDataUrl(raw, maxSide)
+}
+
+/** dataURL → 等比缩小(可选) → 返回 {data, mediaType, name}。缩小时统一转 image/jpeg。 */
+async function downscaleImageDataUrl(dataUrl, maxSide = IMG_MAX_SIDE, outType = 'image/jpeg') {
+  const m = /^data:([^;,]+);base64,/.exec(dataUrl)
+  const mediaType = m ? m[1] : 'image/jpeg'
+  const img = new Image()
+  await new Promise((resolve, reject) => {
+    img.onload = resolve
+    img.onerror = () => reject(new Error('image-load-failed'))
+    img.src = dataUrl
+  })
+  const w = img.naturalWidth || 1, h = img.naturalHeight || 1
+  const scale = Math.min(1, maxSide / Math.max(w, h))
+  let out = dataUrl
+  if (scale < 1 || !/^image\/(jpeg|png|webp|gif)$/.test(mediaType)) {
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(w * scale))
+    canvas.height = Math.max(1, Math.round(h * scale))
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+    out = canvas.toDataURL(outType, 0.85)
+  }
+  return { data: out.split(',')[1] || '', mediaType: out.split(',')[0].match(/^data:([^;,]+)/)?.[1] || 'image/jpeg', name: '' }
+}
+
+/** 发送一张或多张图片消息。 */
+async function sendImageMessages(items) {
+  const list = (items || []).filter(Boolean)
+  if (!list.length || !state.current) return false
+  $('btn-send').disabled = true
+  try {
+    const content = []
+    for (const it of list) {
+      const src = typeof it === 'string' ? await downscaleImageDataUrl(it) : it
+      content.push({ type: 'image', mediaType: src.mediaType || 'image/jpeg', data: src.data || String(it).split(',')[1] || '' })
+    }
+    const v = await safeRpc('session.prompt', { sessionId: state.current, mode: 'queue', content }, t('composer.imageFail', { msg: '' }))
+    if (v?.accepted) { toast(t('composer.imageSent'), 'ok'); return true }
+    if (v?.command?.text) { toast(t('send.commandExecuted'), 'ok'); return true }
+    return false
+  } finally {
+    $('btn-send').disabled = false
+  }
+}
+
+/** 相机按钮: 拍照 → 作为图片消息发送。 */
+async function takePhotoAndSend() {
+  if (!state.current) return
+  const camera = CAP?.Plugins?.Camera
+  if (camera?.getPhoto) {
+    try {
+      const photo = await camera.getPhoto({
+        resultType: 'dataUrl', source: 'CAMERA', quality: 85,
+        correctOrientation: true, saveToGallery: false,
+      })
+      if (!photo?.dataUrl) { toast(t('composer.noPhoto'), 'err'); return }
+      await sendImageMessages([photo.dataUrl])
+    } catch (e) {
+      const msg = String(e?.message || e || '')
+      toast(/cancel/i.test(msg) ? t('composer.noPhoto') : t('composer.cameraFail', { msg }), 'err')
+    }
+    return
+  }
+  // 浏览器兜底: 复用相册文件选择, capture 指定优先开相机; 选中后直接发送
+  albumState.cameraIntent = true
+  const input = $('album-file-input')
+  input.setAttribute('capture', 'environment')
+  input.click()
+}
+
+/** 相册文件选择 → 多选预览。 */
+async function onAlbumFilesChange(fileList) {
+  const files = [...(fileList || [])].filter(f => f && /^image\//i.test(f.type || ''))
+  if (!files.length) return
+  const room = ALBUM_MAX - albumState.items.length
+  const pick = files.slice(0, Math.max(0, room))
+  if (files.length > room) toast(t('composer.albumLimit', { n: ALBUM_MAX }), 'err')
+  for (const f of pick) {
+    try {
+      const { data, mediaType, name } = await fileToImageDataUrl(f)
+      const item = { data, mediaType, name: f.name || '' }
+      albumState.items.push(item)
+      albumState.selected.add(albumState.items.length - 1)
+    } catch { /* 跳过读失败的图片 */ }
+  }
+  renderAlbumGrid()
+}
+
+function renderAlbumGrid() {
+  const grid = $('album-grid')
+  const count = $('album-count')
+  const sendBtn = $('album-send')
+  const items = albumState.items
+  if (!items.length) {
+    grid.innerHTML = `<div class="album-empty">${t('composer.albumEmpty')}</div>`
+  } else {
+    grid.innerHTML = items.map((it, i) => {
+      const sel = albumState.selected.has(i)
+      return `<div class="album-item ${sel ? 'selected' : ''}" data-idx="${i}">
+        <img src="data:${it.mediaType};base64,${it.data}" alt="">
+        <span class="album-check">${sel ? '✓' : ''}</span>
+      </div>`
+    }).join('')
+    grid.querySelectorAll('.album-item').forEach(el => el.addEventListener('click', () => {
+      const i = Number(el.dataset.idx)
+      if (albumState.selected.has(i)) albumState.selected.delete(i)
+      else albumState.selected.add(i)
+      renderAlbumGrid()
+    }))
+  }
+  const selCount = albumState.selected.size
+  count.textContent = selCount ? selCount + '/' + items.length : ''
+  sendBtn.classList.toggle('hidden', selCount === 0)
+}
+
+async function sendSelectedAlbum() {
+  const idxs = [...albumState.selected].sort((a, b) => a - b)
+  if (!idxs.length) return
+  const items = idxs.map(i => albumState.items[i])
+  const ok = await sendImageMessages(items)
+  if (ok) {
+    // 已发送的移出待选, 其余保留
+    const keep = albumState.items.filter((_, i) => !albumState.selected.has(i))
+    albumState.items = keep
+    albumState.selected = new Set()
+    renderAlbumGrid()
+    hideComposerMenu()
+  }
+}
+
+function resetAlbumPanel() {
+  albumState.items = []
+  albumState.selected = new Set()
+  renderAlbumGrid()
+}
+
 function hideComposerMenu() {
   $('composer-menu').classList.add('hidden')
   $('btn-plus').classList.remove('active')
@@ -1914,7 +2066,10 @@ function toggleComposerMenu() {
   const show = menu.classList.contains('hidden')
   menu.classList.toggle('hidden', !show)
   $('btn-plus').classList.toggle('active', show)
-  if (show && !state.models.loaded && !state.models.loading) loadSessionModels()
+  if (show) {
+    if (!state.models.loaded && !state.models.loading) loadSessionModels()
+    else renderModelQuick()
+  }
 }
 
 function isMobileDevice() {
@@ -1951,6 +2106,7 @@ function renderModelMenu() {
     box.innerHTML = '<span>' + ((state.models.failures || []).map(f => f.name + ' ' + t('models.unavailable')).join('；') || t('models.none')) + '</span>'
     const effortGroup = $('menu-effort-group')
     if (effortGroup) effortGroup.classList.add('hidden')
+    renderModelQuick()
     return
   }
   const cur = state.models.current
@@ -1964,7 +2120,30 @@ function renderModelMenu() {
     </div>`).join('')
   box.querySelectorAll('[data-model]').forEach(btn =>
     btn.addEventListener('click', () => selectSessionModel(btn.dataset.provider, btn.dataset.model)))
+  renderModelQuick()
   renderEffortMenu()
+}
+
+/** ＋面板模型快捷切换: 2 个选择按钮(当前模型 + 下一可用模型), 复用同一切换能力。 */
+function renderModelQuick() {
+  const quick = $('menu-model-quick')
+  if (!quick) return
+  const groups = state.models.groups || []
+  const flat = []
+  for (const g of groups) for (const m of (g.models || [])) flat.push({ provider: g.id, name: g.name || g.id, model: m.id, label: m.name || m.id })
+  if (!flat.length) { quick.innerHTML = `<span class="muted" style="font-size:12px">${t('composer.modelQuickEmpty')}</span>`; return }
+  const cur = state.models.current
+  const curIdx = flat.findIndex(f => cur && f.provider === cur.provider && f.model === cur.model)
+  const curItem = curIdx >= 0 ? flat[curIdx] : flat[0]
+  const nextItem = flat[(curIdx >= 0 ? curIdx : -1) + 1] || (flat.length > 1 ? flat[0] : null)
+  const btns = [curItem]
+  if (nextItem && !(nextItem.provider === curItem.provider && nextItem.model === curItem.model)) btns.push(nextItem)
+  quick.innerHTML = btns.map((f, i) => {
+    const isCur = i === 0
+    const label = isCur ? f.label : f.label
+    const sub = isCur ? (cur?.provider || f.provider) : f.provider
+    return `<button class="model-chip ${isCur ? 'current' : ''}" data-model="${esc(f.model)}" data-provider="${esc(f.provider)}" title="${esc(sub)}">${esc(label)}</button>`
+  }).join('')
 }
 
 function renderEffortMenu() {
@@ -3183,6 +3362,7 @@ const VOICE_CANCEL_DIST = 60 // 上移取消阈值(px)
 const voiceState = {
   recording: false,      // 识别会话进行中
   cancelled: false,      // 本次会话是否已取消(取消后忽略到达的回调)
+  retried: false,        // 本次会话是否已自动重试过一次(首次报错自动重试)
   target: 'composer',    // 'composer' | 'test'(功能测试页)
   startY: 0,             // 按下时的 Y
   moved: 0,              // 上移位移
@@ -3192,7 +3372,7 @@ const voiceState = {
   pointerId: null,       // 按住手势的 pointerId(setPointerCapture 后跟随)
   apiKeyPlain: ''        // 设置页密钥明文(失焦打码用)
 }
-const voiceHandlers = { partial: null, final: null, error: null }
+const voiceHandlers = { partial: null, final: null, error: null, rms: null }
 let voiceSession = 0     // 每次开始识别自增, 防止旧会话回调误提交到新会话
 let webkitRec = null
 
@@ -3227,12 +3407,13 @@ function voicePointerY(e) {
   return 0
 }
 
-/** 原生桥回传入口: {type:'partial'|'final'|'error', text, error} */
+/** 原生桥回传入口: {type:'partial'|'final'|'error'|'rms', text, error} */
 window.__speechBridge = (ev) => {
   if (!ev || !ev.type) return
   if (ev.type === 'partial') { if (voiceHandlers.partial) voiceHandlers.partial(String(ev.text || '')) }
   else if (ev.type === 'final') { if (voiceHandlers.final) voiceHandlers.final(String(ev.text || '')) }
   else if (ev.type === 'error') { if (voiceHandlers.error) voiceHandlers.error(String(ev.error || 'unknown')) }
+  else if (ev.type === 'rms') { if (voiceHandlers.rms) voiceHandlers.rms(Number(ev.text) || 0) }
 }
 
 function voiceErrorText(code) {
@@ -3249,6 +3430,7 @@ function startVoiceRecognition(handlers) {
   voiceHandlers.partial = handlers.partial || null
   voiceHandlers.final = handlers.final || null
   voiceHandlers.error = handlers.error || null
+  voiceHandlers.rms = handlers.rms || null
   const b = speechBridge()
   if (b && typeof b.start === 'function') {
     try { b.start(); return true } catch { return false }
@@ -3338,14 +3520,20 @@ async function convertToPrompt(rawText) {
 /* ---- 按住说话浮层 ---- */
 function openVoiceOverlay() {
   const ov = $('voice-overlay')
-  ov.classList.remove('hidden', 'cancel')
+  ov.classList.remove('hidden', 'cancel', 'live')
+  resetVoiceWave()
   $('voice-hint').textContent = t('voice.hintNormal')
 }
 function closeVoiceOverlay() {
   const ov = $('voice-overlay')
   ov.classList.add('hidden')
-  ov.classList.remove('cancel')
+  ov.classList.remove('cancel', 'live')
+  resetVoiceWave()
   $('voice-hint').textContent = t('voice.hintNormal')
+}
+/** 清掉 RMS 实时波形的内联高度, 恢复 CSS 弹跳动画 */
+function resetVoiceWave() {
+  document.querySelectorAll('#voice-overlay .voice-wave span').forEach(s => { s.style.height = '' })
 }
 function clearHoldTalkPressed() {
   $('hold-talk-btn').classList.remove('recording')
@@ -3357,6 +3545,7 @@ function beginHoldTalk(e, target) {
   const mySession = ++voiceSession
   voiceState.recording = true
   voiceState.cancelled = false
+  voiceState.retried = false
   voiceState.target = target || 'composer'
   voiceState.startY = voicePointerY(e)
   voiceState.moved = 0
@@ -3366,8 +3555,9 @@ function beginHoldTalk(e, target) {
   if (voiceState.target === 'composer') $('hold-talk-btn').classList.add('recording')
   else $('voice-test-hold').classList.add('recording')
   openVoiceOverlay()
-  const ok = startVoiceRecognition({
+  const handlers = {
     partial: (txt) => { if (voiceState.target === 'test') $('voice-test-raw').value = txt },
+    rms: (level) => renderVoiceWave(level),
     final: (txt) => {
       // 同一会话且未取消才处理; 识别结束即提交(即使 touchend 丢失/未松手), 避免卡住
       if (mySession !== voiceSession || voiceState.cancelled) return
@@ -3381,14 +3571,27 @@ function beginHoldTalk(e, target) {
     },
     error: (code) => {
       if (mySession !== voiceSession || voiceState.cancelled) return
+      const c = String(code || 'unknown')
+      // 首次报错自动重试一次(仅非权限类错误), 防"识别出错(9)"孤儿识别会话:
+      // 部分 ROM 首次 start 会误报错误, 重试一次往往就正常; 重试仍失败则按正常错误流程收尾
+      if (!voiceState.retried && !isVoicePermError(c)) {
+        voiceState.retried = true
+        setTimeout(() => {
+          if (mySession !== voiceSession || voiceState.cancelled) return
+          if (!voiceState.recording) return // 已松手/已取消则不再拉起
+          startVoiceRecognition(handlers)
+        }, 250)
+        return
+      }
       voiceState.recording = false
       voiceState.pendingCommit = false
       voiceState.finalText = ''
       clearHoldTalkPressed()
       closeVoiceOverlay()
-      toast(voiceErrorText(code), 'err')
+      toast(voiceErrorText(c), 'err')
     }
-  })
+  }
+  const ok = startVoiceRecognition(handlers)
   if (!ok) {
     voiceState.recording = false
     voiceState.cancelled = true
@@ -3397,6 +3600,26 @@ function beginHoldTalk(e, target) {
     toast(t('voice.unsupported'), 'err')
     updateComposerChrome() // 不支持则隐藏语音图标
   }
+}
+
+/** 权限类错误重试无意义, 直接提示用户; 其余错误(含 9)首次自动重试 */
+function isVoicePermError(code) {
+  return code === 'permission' || code === '8' || code === 'not-allowed' || code === 'service-not-allowed'
+}
+
+/** 原生 RMS 实时驱动浮层声柱高度(0~1); 无 RMS 数据时由 CSS 弹跳动画兜底 */
+function renderVoiceWave(level) {
+  const ov = $('voice-overlay')
+  if (!ov || ov.classList.contains('hidden')) return
+  ov.classList.add('live')
+  const bars = ov.querySelectorAll('.voice-wave span')
+  const t = Date.now()
+  bars.forEach((b, i) => {
+    // 三根声柱错相抖动 + 音量包络
+    const phase = Math.sin(t / 140 + i * 1.1) * 0.35 + 0.65
+    const h = Math.max(12, Math.round(64 * level * phase) + 10)
+    b.style.height = h + 'px'
+  })
 }
 
 /** 浮层 touchmove: 上移超阈值 → 取消态 */
@@ -3525,7 +3748,10 @@ function setHoldTalk(on) {
   c.classList.toggle('hold-talk', on)
   $('hold-talk-btn').classList.toggle('hidden', !on)
   renderVoiceKbdBtn(on)
-  if (on) { try { $('composer-input').blur() } catch {} }
+  if (on) {
+    try { $('composer-input').blur() } catch {}
+    hideComposerMenu() // 按住说话态不保留 ＋ 面板
+  }
   if (!on) updateComposerChrome()
 }
 
@@ -3545,12 +3771,16 @@ function updateComposerChrome() {
   const inHold = $('composer').classList.contains('hold-talk')
   const supported = voiceRecSupported()
   const fs = composerFsActive()
-  // 按住说话态: 显示键盘图标; 否则: 仅移动端 + 支持 + 无文本时显示输入框内声波图标
-  const voiceVisible = !!(!inHold && isMobileDevice() && supported && !text)
+  const mobile = isMobileDevice()
+  // 相机按钮: 仅移动端且非按住说话态
+  $('btn-camera').classList.toggle('hidden', !mobile || inHold)
+  // 声波按钮: 移动端 + 支持 + 无文本 + 非按住说话态 (输入框外独立按钮, 右侧倒数第二)
+  const voiceVisible = !!(!inHold && mobile && supported && !text)
   renderVoiceBtn(voiceVisible)
   renderVoiceKbdBtn(inHold)
+  // 发送按钮: 有文本且非按住说话态时显示 (豆包风格: 无文本时 + 号在最右)
+  $('btn-send').classList.toggle('hidden', !text || inHold)
   const wrap = $('composer-input-wrap')
-  wrap.classList.toggle('has-voice-btn', voiceVisible)
   // 全屏按钮: 全屏态常显; 普通态超过 5 行显示
   const showFs = fs || composerLines(input) > 5
   $('btn-fs-toggle').classList.toggle('hidden', !showFs)
@@ -3566,6 +3796,7 @@ function setComposerFs(on) {
   fsBtn.title = on ? t('voice.exitFullscreen') : t('voice.fullscreen')
   fsBtn.setAttribute('aria-label', on ? t('voice.exitFullscreen') : t('voice.fullscreen'))
   if (on) {
+    hideComposerMenu() // 全屏输入不保留 ＋ 面板
     if ($('composer').classList.contains('hold-talk')) setHoldTalk(false) // 全屏/语音不冲突
   } else {
     wrap.classList.remove('dragging')
@@ -3631,6 +3862,83 @@ function initVoiceSettings() {
 
   $('btn-voice-conn-test').addEventListener('click', runVoiceConnTest)
   $('btn-voice-func-test').addEventListener('click', openVoiceTest)
+  initVoiceOfflinePack()
+}
+
+/* ---- 离线识别包 (SenseVoice-Small) ----
+ * 零依赖: App 内用 native HttpURLConnection 下载到私有目录(下载/解压均系统 API);
+ * 浏览器环境给出提示, 不做真实下载。 */
+const VOICE_OFFLINE_LS = { url: 'voiceOfflineUrl', size: 'voiceOfflineSize' }
+const VOICE_OFFLINE_PLACEHOLDER_URL = 'https://example.com/sensevoice-small.zip'
+const voiceOfflineState = { downloading: false, size: 0 }
+
+function initVoiceOfflinePack() {
+  const urlInput = $('voice-offline-url')
+  if (!urlInput) return
+  urlInput.value = LS.get(VOICE_OFFLINE_LS.url, '') || ''
+  urlInput.addEventListener('change', () => {
+    const v = String(urlInput.value || '').trim()
+    LS.set(VOICE_OFFLINE_LS.url, v)
+  })
+  voiceOfflineState.size = Number(LS.get(VOICE_OFFLINE_LS.size, '0')) || 0
+  renderVoiceOfflineStatus()
+  $('btn-voice-offline-dl').addEventListener('click', startVoiceOfflineDownload)
+}
+
+function renderVoiceOfflineStatus(pct) {
+  const status = $('voice-offline-status')
+  const btn = $('btn-voice-offline-dl')
+  if (!status || !btn) return
+  if (voiceOfflineState.downloading) {
+    status.textContent = t('voice.offlineDownloading', { pct: pct ?? 0 })
+    btn.disabled = true
+  } else if (voiceOfflineState.size > 0) {
+    status.textContent = t('voice.offlineDone', { size: fmtSize(voiceOfflineState.size) })
+    status.style.color = 'var(--dsr-success)'
+    btn.disabled = false
+  } else {
+    status.textContent = t('voice.offlineNone')
+    status.style.color = ''
+    btn.disabled = false
+  }
+}
+
+/** 触发下载: App 内走 native 桥; 浏览器仅提示。 */
+function startVoiceOfflineDownload() {
+  if (voiceOfflineState.downloading) return
+  if (!CAP?.isNativePlatform?.()) {
+    toast(t('voice.offlineNotNative'), 'err')
+    return
+  }
+  const url = String($('voice-offline-url').value || '').trim() || VOICE_OFFLINE_PLACEHOLDER_URL
+  if (!/^https?:\/\//i.test(url)) { toast(t('voice.offlineFail', { msg: 'bad-url' }), 'err'); return }
+  voiceOfflineState.downloading = true
+  renderVoiceOfflineStatus(0)
+  try {
+    window.NativeFile?.downloadOfflinePack?.(url, 'sensevoice-small.zip')
+  } catch (e) {
+    voiceOfflineState.downloading = false
+    renderVoiceOfflineStatus()
+    toast(t('voice.offlineFail', { msg: e?.message || '' }), 'err')
+  }
+}
+
+/** native 回传: {type:'progress'|'done'|'error', value, extra} */
+window.__offlinePackBridge = (ev) => {
+  if (!ev || !ev.type) return
+  if (ev.type === 'progress') {
+    renderVoiceOfflineStatus(Number(ev.value) || 0)
+  } else if (ev.type === 'done') {
+    voiceOfflineState.downloading = false
+    voiceOfflineState.size = Number(ev.value) || 0
+    LS.set(VOICE_OFFLINE_LS.size, String(voiceOfflineState.size))
+    renderVoiceOfflineStatus()
+    toast(t('voice.offlineDone', { size: fmtSize(voiceOfflineState.size) }), 'ok')
+  } else if (ev.type === 'error') {
+    voiceOfflineState.downloading = false
+    renderVoiceOfflineStatus()
+    toast(t('voice.offlineFail', { msg: ev.extra || ev.value || '' }), 'err')
+  }
 }
 
 async function runVoiceConnTest() {
@@ -3646,13 +3954,17 @@ async function runVoiceConnTest() {
   result.style.color = ''
   btn.disabled = true
   const t0 = performance.now()
+  // 8s 超时: API 挂起时也能返回结果, 避免"测试中"永远不结束
+  const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(8000) : undefined
+  const opts = signal ? { headers: { authorization: 'Bearer ' + cfg.key }, signal } : { headers: { authorization: 'Bearer ' + cfg.key } }
   try {
-    let res = await fetch(cfg.base + '/models', { headers: { authorization: 'Bearer ' + cfg.key } })
+    let res = await fetch(cfg.base + '/models', opts)
     if (!res.ok && res.status === 404) {
       // 部分网关不实现 /models, 兜底发最小 chat 请求
       res = await fetch(cfg.base + '/chat/completions', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: 'Bearer ' + cfg.key },
+        ...(signal ? { signal } : {}),
         body: JSON.stringify({ model: cfg.model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 })
       })
     }
@@ -3661,7 +3973,9 @@ async function runVoiceConnTest() {
     else { result.textContent = t('voice.connFail', { msg: 'HTTP ' + res.status + ' · ' + ms + 'ms' }); result.style.color = 'var(--dsr-error)' }
   } catch (e) {
     const ms = Math.round(performance.now() - t0)
-    result.textContent = t('voice.connFail', { msg: ((e && e.message) || t('voice.networkError')) + ' · ' + ms + 'ms' })
+    const timedOut = e && (e.name === 'TimeoutError' || e.name === 'AbortError')
+    const msg = timedOut ? t('voice.connTimeout') : ((e && e.message) || t('voice.networkError'))
+    result.textContent = t('voice.connFail', { msg: msg + ' · ' + ms + 'ms' })
     result.style.color = 'var(--dsr-error)'
   } finally {
     btn.disabled = false
@@ -3685,6 +3999,10 @@ function exitComposerExtras() {
   if ($('composer')?.classList.contains('hold-talk')) setHoldTalk(false)
   if (composerFsActive()) setComposerFs(false)
   closeVoiceTest()
+  hideComposerMenu()
+  resetAlbumPanel()
+  const cmd = $('menu-cmd-input')
+  if (cmd) cmd.value = ''
 }
 
 /** 全屏输入框: 在输入框区域下滑 → 输入框跟随手指下移, 超阈值松手退出全屏 */
@@ -4273,6 +4591,47 @@ function bindUi() {
     }
   })
   $('btn-model-refresh').addEventListener('click', loadSessionModels)
+  // ---- ＋ 面板: 输入指令行(执行) ----
+  const menuCmdSend = () => {
+    const box = $('menu-cmd-input')
+    const v = String(box.value || '').trim()
+    if (!v || !state.current) return
+    box.value = ''
+    sendSessionText(v)
+  }
+  $('menu-cmd-send').addEventListener('click', menuCmdSend)
+  $('menu-cmd-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); menuCmdSend() }
+  })
+  // ＋ 面板: 模型快捷切换(2 个按钮)
+  $('menu-model-quick').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-model]')
+    if (btn) selectSessionModel(btn.dataset.provider, btn.dataset.model)
+  })
+  // ---- 相机 / 相册 ----
+  $('btn-camera').addEventListener('click', takePhotoAndSend)
+  $('album-add').addEventListener('click', () => {
+    const input = $('album-file-input')
+    input.removeAttribute('capture') // 相册选择不强制相机
+    input.click()
+  })
+  $('album-file-input').addEventListener('change', (e) => {
+    const cam = albumState.cameraIntent
+    albumState.cameraIntent = false
+    const files = [...(e.target.files || [])]
+    e.target.value = '' // 允许连续选同一批
+    if (cam) {
+      // 浏览器相机兜底: 单张直接发送
+      if (files[0]) {
+        fileToImageDataUrl(files[0]).then(({ data, mediaType, name }) =>
+          sendImageMessages([{ data, mediaType, name }])).catch(() => toast(t('composer.imageFail', { msg: '' }), 'err'))
+      }
+      return
+    }
+    onAlbumFilesChange(files)
+  })
+  $('album-send').addEventListener('click', sendSelectedAlbum)
+  renderAlbumGrid()
   const input = $('composer-input')
   input.addEventListener('input', () => {
     // 有文本时强制退出"按住说话"态并隐藏语音图标; 无文本恢复显示

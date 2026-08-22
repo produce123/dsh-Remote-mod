@@ -1173,9 +1173,9 @@ function renderSessions() {
   $('mobile-session-list').classList.toggle('workspace-sorted', state.sessionSort === 'workspace')
   const sort = $('session-sort')
   if (sort) sort.value = state.sessionSort
-  // 归档折叠按钮不再直接绑定: 统一走 bindUi 里 session-list / mobile-session-list 的委托,
-  // 避免与委托重复触发导致状态切换两次、"点击无效"。
-  document.querySelectorAll('[data-id]').forEach(b => b.addEventListener('click', () => openSession(b.dataset.id)))
+  // 归档折叠按钮与会话项都只走 bindUi 里 session-list / mobile-session-list 的事件委托, 不在此直接绑定:
+  // 直接绑定会与委托重复触发——归档按钮一次点击被处理两次(LS 状态切回原样, 表现为"点击无效"),
+  // 会话项会被 openSession 触发两次。两处列表填充相同 HTML, 各自绑同一套委托(含窄屏 mobile-session-list)。
   renderWorkbench()
 }
 
@@ -1934,6 +1934,50 @@ function showSettingsPage(name) {
   home.classList.add('hidden')
   for (const g of SETTINGS_GROUPS) $('settings-page-' + g)?.classList.toggle('hidden', g !== name)
   if (name === 'general') renderPresetSummary()
+  if (name === 'about') refreshLinkCheck()
+}
+
+/* ---------------- 系统链路检测 ---------------- */
+// 链路状态以网关自身 /health 为准(ok=网关可达, upstreamOk=DSH 探测结果),
+// 不再依赖设置里的 state.server(未配置服务器时会被误判为网关离线)或 hostInfo RPC。
+// DSH 探测: 老网关/无 /healthz 的 DSH 上 upstreamOk 可能为 false, 此时用一次真实
+// host.describe RPC 复核 DSH API 是否可达, 避免"手机在线、桌面显示异常"的误报。
+async function refreshLinkCheck() {
+  const summary = $('linkcheck-summary')
+  if (!summary) return
+  const setItem = (name, ok) => {
+    const el = document.querySelector(`[data-linkcheck="${name}"]`)
+    if (!el) return
+    el.classList.toggle('ok', ok)
+    el.classList.toggle('off', !ok)
+    const b = el.querySelector('b')
+    if (b) b.textContent = ok ? t('ds.linkOnline') : t('ds.linkOffline')
+  }
+  let gw = false, dsh = false, upstream = '', version = ''
+  try {
+    const res = await fetch(apiUrl('/health?t=' + Date.now()), { cache: 'no-store' })
+    const json = await res.json().catch(() => ({}))
+    gw = res.ok && json.ok === true
+    dsh = json.upstreamOk === true
+    upstream = json.upstream || ''
+    version = json.version || ''
+  } catch {}
+  if (!dsh && state.token) {
+    try {
+      const host = await rpc('host.describe', {}, 4000)
+      dsh = !!host
+    } catch {}
+  }
+  const mux = !!state.streamsOk?.mux
+  const host = !!state.streamsOk?.host
+  const online = [gw, dsh, mux, host].filter(Boolean).length
+  setItem('gateway', gw); setItem('dsh', dsh); setItem('mux', mux); setItem('host', host)
+  summary.classList.remove('ok', 'warn', 'bad')
+  if (!gw) { summary.textContent = t('ds.linkGatewayDown'); summary.classList.add('bad') }
+  else if (online === 4) { summary.textContent = t('ds.linkAllOk'); summary.classList.add('ok') }
+  else { summary.textContent = t('ds.linkPartial', { n: online }); summary.classList.add('warn') }
+  const detail = $('linkcheck-detail')
+  if (detail) detail.textContent = gw && upstream ? t('ds.linkDetail', { version, upstream }) : ''
 }
 function updateConn() {
   const el = $('conn-badge')
@@ -1976,6 +2020,8 @@ function updateConn() {
   el.className = 'ds-conn ' + (all ? 'on' : any ? 'ing' : '')
   el.title = all ? t('ds.connOn') : any ? t('ds.connIng') : t('ds.connOff')
   $('server-badge').textContent = serverText
+  // 链路状态随实时通道变化刷新(面板不存在时内部直接返回)
+  refreshLinkCheck()
 }
 
 /* ---------------- 初始化 ---------------- */
@@ -2125,6 +2171,7 @@ function bindUi() {
   $('modal-presets').addEventListener('click', (e) => { if (e.target === $('modal-presets')) closePresetModal() })
   $('btn-server-speed').addEventListener('click', () => selectFastestServer({ silent: false }))
   $('btn-server-add').addEventListener('click', addServer)
+  $('btn-linkcheck-refresh').addEventListener('click', refreshLinkCheck)
   $('btn-group-add').addEventListener('click', addGroup)
   $('group-select-btn').addEventListener('click', (e) => { e.stopPropagation(); toggleGroupMenu() })
   document.addEventListener('click', (e) => { if (!e.target.closest('#group-select')) closeGroupMenu() })

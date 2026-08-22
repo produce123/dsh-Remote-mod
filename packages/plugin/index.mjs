@@ -1,6 +1,7 @@
 /* dsh-remote DSH 插件 · Node half
  * 在 DSH Web 的 httpServer 上挂 /remote 前缀路由:
- *   - /remote/...         移动控制台 + 主机管理页静态资源
+ *   - /remote/...         移动控制台静态资源
+ *   - /remote/admin*      管理页入口: 统一 302 到独立网关 /admin?token=xxx(管理界面唯一入口)
  *   - /remote/admin/api   管理控制台数据: 优先代理本地网关(完整设备监控/更新检查),
  *                         网关不可用时回退到插件模式主机状态
  * 浏览器侧入口由 client half 注册在 DSH 原生侧边栏(见 client.js)。
@@ -485,8 +486,20 @@ async function serveStatic(req, res, ctx) {
     res.end()
     return
   }
-  if (pathname === `${MOUNT}/admin`) {
-    res.writeHead(302, { location: `${MOUNT}/admin/` })
+
+  // 管理页统一入口: /remote/admin、/remote/admin/、/remote/admin.html、/remote/admin/index.html
+  // 一律 302 到独立网关管理页(拼接网关端口与 token, 保留原查询参数如 ?embedded=1)。
+  // 统一后管理页只由网关托管, 插件不再渲染 admin.html(admin.js 已无插件模式分支)。
+  if (pathname === `${MOUNT}/admin` || pathname === `${MOUNT}/admin/`
+    || pathname === `${MOUNT}/admin.html` || pathname === `${MOUNT}/admin/index.html`) {
+    const params = new URLSearchParams()
+    const token = gatewayToken()
+    if (token) params.set('token', token)
+    for (const [k, v] of new URL(req.url ?? '/', 'http://x').searchParams) {
+      if (!params.has(k)) params.set(k, v)
+    }
+    const qs = params.toString()
+    res.writeHead(302, { location: `${gatewayBase()}/admin${qs ? '?' + qs : ''}` })
     res.end()
     return
   }
@@ -738,4 +751,8 @@ export function apply(ctx) {
   })
   // DSH 启动/重启后自愈: 用户没关过网关就自动拉起(默认开, DSH_REMOTE_AUTOSTART=0 关闭)
   void ensureGateway()
+  // 周期自愈: 管理页已统一到独立网关, 抽屉不再轮询插件 /remote/admin/api/state 触发
+  // ensureGateway; 改由插件自身定时检查, 网关异常上游/版本漂移/进程退出时自动拉起。
+  const healTimer = setInterval(() => { void ensureGateway() }, 30_000)
+  if (typeof healTimer.unref === 'function') healTimer.unref()
 }

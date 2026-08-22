@@ -242,6 +242,25 @@ a.ds-btn { text-decoration: none; }
 .ds-setting-name { font-size: 13.5px; font-weight: 600; }
 .ds-setting-desc { font-size: 12px; color: var(--dsr-muted); margin-top: 2px; word-break: break-all; }
 #token-desc { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+/* 系统链路检测 */
+.ds-linkcheck { display: flex; flex-direction: column; gap: 10px; background: var(--dsr-panel); border: 1px solid var(--dsr-line); border-radius: 12px; padding: 12px 14px; }
+.ds-linkcheck-head { display: flex; align-items: flex-start; gap: 10px; }
+.ds-linkcheck-head > div:first-child { flex: 1; min-width: 0; }
+.ds-linkcheck-head .ds-btn { flex-shrink: 0; margin-top: 2px; }
+#linkcheck-summary { font-weight: 600; color: var(--dsr-text); }
+#linkcheck-summary.ok { color: var(--dsr-success); }
+#linkcheck-summary.warn { color: var(--dsr-warning); }
+#linkcheck-summary.bad { color: var(--dsr-error); }
+.ds-linkcheck-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.ds-linkcheck-item { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; background: var(--dsr-bg); border: 1px solid var(--dsr-line); border-radius: 10px; font-size: 12px; color: var(--dsr-muted); text-align: center; }
+.ds-linkcheck-item i { width: 8px; height: 8px; border-radius: 50%; background: var(--dsr-muted); display: block; }
+.ds-linkcheck-item.ok i { background: var(--dsr-success); box-shadow: 0 0 0 3px var(--dsr-success-soft); }
+.ds-linkcheck-item.off i { background: var(--dsr-error); box-shadow: 0 0 0 3px var(--dsr-error-soft); }
+.ds-linkcheck-item.ok b { color: var(--dsr-success); }
+.ds-linkcheck-item.off b { color: var(--dsr-error); }
+@media (max-width: 520px) {
+  .ds-linkcheck-grid { grid-template-columns: repeat(2, 1fr); }
+}
 .ds-group-bar { display: flex; align-items: center; gap: 10px; padding: 2px 0; }
 .ds-group-bar > label { font-size: 12px; color: var(--dsr-muted); white-space: nowrap; }
 .ds-group-select { flex: 1; min-width: 0; position: relative; }

@@ -228,6 +228,32 @@ async function waitForPollEvents(kind, minCount = 1, timeoutMs = 5000) {
   throw new Error(`timed out waiting for poll events (${kind}); last=${JSON.stringify(last)}`)
 }
 
+/** 打开一条到网关的 WS(经假上游完成 101 握手), 返回 socket; 调用方负责 destroy。 */
+function openWsChannel(kind) {
+  return new Promise((resolve, reject) => {
+    const sock = net.connect(port, '127.0.0.1')
+    let buf = ''
+    sock.setTimeout(5000)
+    sock.on('timeout', () => { sock.destroy(); reject(new Error('ws handshake timeout')) })
+    sock.on('error', reject)
+    sock.on('data', (d) => {
+      buf += d.toString('binary')
+      if (buf.includes('101 Switching Protocols')) {
+        sock.removeAllListeners('data')
+        resolve(sock)
+      }
+    })
+    sock.write(
+      `GET /api/events.${kind}?token=${TOKEN} HTTP/1.1\r\n` +
+      'Host: 127.0.0.1\r\n' +
+      'Upgrade: websocket\r\n' +
+      'Connection: Upgrade\r\n' +
+      'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n' +
+      'Sec-WebSocket-Version: 13\r\n\r\n'
+    )
+  })
+}
+
 test('鉴权：无 token / 错误 token 拒绝，正确 token 通过', async () => {
   const noToken = await fetch(`${base}/fs/list`)
   assert.equal(noToken.status, 401)
@@ -393,6 +419,13 @@ test('静态文件与 update.json：根页面、version.json、update.json 可�
   assert.equal(idx.status, 200)
   assert.match(await idx.text(), /DSH Remote/)
 
+  // 管理页统一入口: /admin、/admin/、/admin/index.html 三种形态都落到 admin.html
+  for (const p of ['/admin', '/admin/', '/admin/index.html']) {
+    const res = await fetch(base + p)
+    assert.equal(res.status, 200, p)
+    assert.match(await res.text(), /DSH Remote · 管理/)
+  }
+
   const verRes = await fetch(`${base}/version.json`)
   assert.equal(verRes.status, 200)
   const ver = await verRes.json()
@@ -525,6 +558,95 @@ test('远程 DSH 控制接口：鉴权与动作校验', async () => {
   assert.equal(valid.status, 501)
   const validBody = await valid.json()
   assert.equal(validBody.supported, false)
+})
+
+test('设备表：同一 IP 的 mux/host 双流与轮询只聚合为一行', async () => {
+  const sock1 = await openWsChannel('mux')
+  const sock2 = await openWsChannel('host')
+  try {
+    // 同一 IP 再来一次轮询请求
+    await fetch(fsUrl('/api/events.poll', { kind: 'mux', since: 0 }), { headers: authHeaders() })
+    const res = await fetch(`${base}/admin/api/state`, { headers: authHeaders() })
+    assert.equal(res.status, 200)
+    const st = await res.json()
+    assert.ok(Array.isArray(st.devices))
+    // 不变量: 设备表按 IP 聚合, 同一 IP 不得出现多行(0.6.9 clientId 键的 6 条复现被杜绝)
+    const ips = st.devices.map(d => d.ip)
+    assert.equal(new Set(ips).size, ips.length, '同一 IP 不得出现多行')
+    const local = st.devices.filter(d => d.ip === '127.0.0.1')
+    assert.equal(local.length, 1, '127.0.0.1 的双 WS + 轮询应聚合为一行')
+    assert.equal(local[0].channels.mux, true, 'mux 通道信息应合并到该行')
+    assert.equal(local[0].channels.host, true, 'host 通道信息应合并到该行')
+  } finally {
+    sock1.destroy()
+    sock2.destroy()
+  }
+})
+
+test('设备表：管理页自身(kind=admin)不计入设备列表与计数', async () => {
+  // 模拟管理页动作: 带 x-dsh-remote-client: admin 调用 DSH 控制端点(该端点 touchDevice)
+  const act = await fetch(`${base}/admin/api/dsh`, {
+    headers: authHeaders({ 'x-dsh-remote-client': 'admin' })
+  })
+  assert.equal(act.status, 200)
+  const res = await fetch(`${base}/admin/api/state`, {
+    headers: authHeaders({ 'x-dsh-remote-client': 'admin' })
+  })
+  assert.equal(res.status, 200)
+  const st = await res.json()
+  assert.ok(!st.devices.some(d => d.kind === 'admin'), '管理页行不得出现在设备列表')
+  assert.equal(st.deviceCount, st.devices.length, '计数必须与列表一致')
+})
+
+test('设备表：IPv6 回环 ::1 归一为 127.0.0.1（双栈不拆行）', async (t) => {
+  const v6port = await getFreePort()
+  const v6base = `http://[::1]:${v6port}`
+  const v6Child = spawn(process.execPath, [GATEWAY], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      HOME: tmpRoot,
+      USERPROFILE: tmpRoot,
+      PORT: String(v6port),
+      HOST: '::1',
+      DSH_UPSTREAM: `http://127.0.0.1:${fakeUpstreamPort}`,
+      TOKEN,
+      TOKEN_FILE: path.join(tmpRoot, 'token'),
+      DSH_REMOTE_FS_ROOT: tmpRoot,
+      DSH_REMOTE_NOTES: path.join(tmpRoot, 'notes.json'),
+      UPDATE_CHECK_URL: 'http://127.0.0.1:1/update',
+      UPDATE_INTERVAL_MS: '3600000',
+      UPDATE_PROXY: '',
+      HTTP_PROXY: '',
+      HTTPS_PROXY: '',
+      ALL_PROXY: '',
+      NO_PROXY: '*'
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  v6Child.stdout.on('data', () => {})
+  v6Child.stderr.on('data', () => {})
+  try {
+    try {
+      await waitForHealth(v6base, 8000)
+    } catch {
+      t.skip('本机不支持 IPv6 回环, 跳过 ::1 归一测试')
+      return
+    }
+    const act = await fetch(`${v6base}/admin/api/dsh`, { headers: authHeaders() })
+    assert.equal(act.status, 200)
+    const res = await fetch(`${v6base}/admin/api/state`, { headers: authHeaders() })
+    assert.equal(res.status, 200)
+    const st = await res.json()
+    assert.ok(!st.devices.some(d => d.ip === '::1'), '不得出现 ::1 行')
+    assert.ok(st.devices.some(d => d.ip === '127.0.0.1'), '::1 请求应归一为 127.0.0.1 行')
+  } finally {
+    if (v6Child.exitCode === null) v6Child.kill('SIGTERM')
+    await Promise.race([
+      once(v6Child, 'exit').then(() => {}),
+      new Promise((r) => setTimeout(r, 2000))
+    ])
+  }
 })
 
 test('事件轮询：鉴权 401', async () => {
