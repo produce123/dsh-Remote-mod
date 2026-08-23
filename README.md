@@ -34,7 +34,7 @@
 dsh plugin --profile web add dsh-remote-mod-plugin
 
 # 或使用 Releases 附带的 tgz 本地安装
-dsh plugin --profile web add /绝对路径/dsh-remote-mod-plugin-0.7.4-mod.1.tgz
+dsh plugin --profile web add /绝对路径/dsh-remote-mod-plugin-0.7.5-mod.tgz
 ```
 
 安装后重启 DSH Web 并强制刷新浏览器（Ctrl+F5），左侧边栏出现 DSH Remote 入口；网关默认监听 `0.0.0.0:8787`，随 DSH 自动启停与自愈（端口可改：插件管理页或 `DSH_REMOTE_GATEWAY_PORT` 环境变量）。

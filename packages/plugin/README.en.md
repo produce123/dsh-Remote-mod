@@ -23,8 +23,8 @@ Per-version details: [GitHub Releases](https://github.com/produce123/dsh-Remote-
 dsh plugin --profile web add dsh-remote-mod-plugin
 
 # Pin a version, or install the tgz shipped in Releases by local path
-dsh plugin --profile web add dsh-remote-mod-plugin@0.7.4-mod.1
-# dsh plugin --profile web add /abs/path/dsh-remote-mod-plugin-0.7.4-mod.1.tgz
+dsh plugin --profile web add dsh-remote-mod-plugin@0.7.5-mod
+# dsh plugin --profile web add /abs/path/dsh-remote-mod-plugin-0.7.5-mod.tgz
 ```
 
 Restart DSH Web and refresh the browser. The DSH Remote entry will appear in the sidebar.

@@ -369,6 +369,11 @@ body.in-session.has-composer-images .history { padding-bottom: calc(146px + var(
 .msg a { color: var(--dsr-accent-strong); text-decoration: underline; word-break: break-all; }
 .msg.user a { color: var(--dsr-on-accent); }
 .msg li { margin: 2px 0; }
+.msg .md-table-wrap { max-width: 100%; overflow-x: auto; margin: 8px 0; }
+.msg .md-table-wrap table { border-collapse: collapse; min-width: 100%; font-size: 12.5px; }
+.msg .md-table-wrap th, .msg .md-table-wrap td { border: 1px solid var(--dsr-line); padding: 6px 9px; text-align: left; word-break: break-word; }
+.msg .md-table-wrap th { background: var(--dsr-panel-2); font-weight: 700; white-space: nowrap; }
+.msg .md-table-wrap tr:nth-child(even) td { background: var(--dsr-bg-2); }
 
 .event {
   align-self: center; font-size: 11px; color: var(--dsr-muted);
