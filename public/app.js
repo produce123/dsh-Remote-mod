@@ -2611,17 +2611,18 @@ function renderFs(data) {
   }
   list.innerHTML = data.entries.map(e => {
     const isDir = e.type === 'dir'
-    return `<div class="fs-row" data-name="${esc(e.name)}" data-type="${esc(e.type)}">
+    const preview = !isDir && fsCanPreview(e.name, e.size)
+    return `<div class="fs-row" data-name="${esc(e.name)}" data-type="${esc(e.type)}" data-size="${Number(e.size) || 0}">
       <span class="fs-ico">${fsIconSvg(isDir)}</span>
       <span class="fs-meta">
         <span class="fs-name">${esc(e.name)}</span>
         <span class="fs-sub">${isDir ? t('fs.dir') : fmtSize(e.size)} · ${fmtFullTime(e.mtimeMs)}</span>
       </span>
-      <span class="fs-arrow">${isDir ? '›' : '↓'}</span>
+      <span class="fs-arrow">${isDir || preview ? '›' : '↓'}</span>
     </div>`
   }).join('')
   list.querySelectorAll('.fs-row').forEach(row =>
-    row.addEventListener('click', () => fsOpenEntry(row.dataset.name, row.dataset.type)))
+    row.addEventListener('click', () => fsOpenEntry(row.dataset.name, row.dataset.type, Number(row.dataset.size))))
 }
 
 function fsIconSvg(isDir) {
@@ -2630,15 +2631,37 @@ function fsIconSvg(isDir) {
     : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5h8l4 4V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z"/><path d="M14 3.5v4h4M8 13h8M8 16h6"/></svg>'
 }
 
-function fsOpenEntry(name, type) {
+function fsOpenEntry(name, type, size = 0) {
   if (!name) return
   const p = fsJoin(state.fs.path, name)
   if (type === 'dir') return loadFs(p)
+  if (fsCanPreview(name, size)) return openFsPreview(p, name)
   downloadFsFile(name)
+}
+
+const FS_PREVIEW_EXTENSIONS = new Set([
+  '.txt', '.md', '.markdown', '.log', '.json', '.jsonl', '.js', '.mjs', '.cjs', '.jsx',
+  '.ts', '.tsx', '.py', '.css', '.html', '.htm', '.xml', '.yaml', '.yml', '.toml',
+  '.ini', '.conf', '.env', '.sh', '.bash', '.zsh', '.fish', '.sql', '.java', '.kt',
+  '.kts', '.go', '.rs', '.c', '.h', '.cpp', '.hpp', '.cs', '.php', '.rb', '.vue',
+  '.svelte', '.gradle', '.properties', '.gitignore', '.dockerfile'
+])
+function fsPreviewExtension(name) {
+  const lower = String(name || '').toLowerCase()
+  if (lower === 'dockerfile') return '.dockerfile'
+  const dot = lower.lastIndexOf('.')
+  return dot >= 0 ? lower.slice(dot) : ''
+}
+function fsCanPreview(name, size) {
+  return Number(size) <= 1024 * 1024 && FS_PREVIEW_EXTENSIONS.has(fsPreviewExtension(name))
 }
 
 function downloadFsFile(name) {
   const p = fsJoin(state.fs.path, name)
+  downloadFsPath(p, name)
+}
+
+function downloadFsPath(p, name) {
   const url = fsApiUrl('/file', { path: p })
   if (CAP?.isNativePlatform?.()) {
     if (window.NativeFile?.downloadToDownloads) {
@@ -2662,6 +2685,54 @@ function downloadFsFile(name) {
   document.body.appendChild(a)
   a.click()
   a.remove()
+}
+
+let fsPreviewGeneration = 0
+async function openFsPreview(pathValue, name) {
+  const generation = ++fsPreviewGeneration
+  state.fs.preview = { path: pathValue, name, extension: fsPreviewExtension(name), content: '' }
+  $('file-preview-title').textContent = name
+  $('file-preview-path').textContent = pathValue
+  $('file-preview-loading').textContent = t('fs.previewLoading')
+  $('file-preview-loading').classList.remove('hidden')
+  $('file-preview-source').classList.add('hidden')
+  $('file-preview-rendered').classList.add('hidden')
+  $('file-preview-tabs').classList.add('hidden')
+  $('modal-file-preview').classList.remove('hidden')
+  try {
+    const res = await fetch(fsApiUrl('/preview', { path: pathValue }), { headers: fsHeaders() })
+    if (res.status === 401) { closeFsPreview(); fsAuthError(401); return }
+    const data = await res.json().catch(() => ({}))
+    if (generation !== fsPreviewGeneration) return
+    if (!res.ok) {
+      const message = data.error === 'preview-too-large' ? t('fs.previewTooLarge')
+        : (data.error === 'preview-unsupported' || data.error === 'preview-binary') ? t('fs.previewUnsupported')
+          : t('fs.previewFailed', { msg: data.error || ('HTTP ' + res.status) })
+      throw new Error(message)
+    }
+    state.fs.preview = data
+    $('file-preview-loading').classList.add('hidden')
+    $('file-preview-source').textContent = data.content || ''
+    const markdown = data.extension === '.md' || data.extension === '.markdown'
+    $('file-preview-tabs').classList.toggle('hidden', !markdown)
+    if (markdown) $('file-preview-rendered').innerHTML = window.mdToHtml(data.content || '')
+    showFsPreviewMode(markdown ? 'rendered' : 'source')
+  } catch (e) {
+    if (generation !== fsPreviewGeneration) return
+    $('file-preview-loading').textContent = e.message || t('fs.previewFailed', { msg: t('fs.networkError') })
+  }
+}
+function showFsPreviewMode(mode) {
+  const rendered = mode === 'rendered' && !($('file-preview-tabs').classList.contains('hidden'))
+  $('file-preview-source').classList.toggle('hidden', rendered)
+  $('file-preview-rendered').classList.toggle('hidden', !rendered)
+  $('file-preview-source-tab').classList.toggle('current', !rendered)
+  $('file-preview-rendered-tab').classList.toggle('current', rendered)
+}
+function closeFsPreview() {
+  fsPreviewGeneration++
+  state.fs.preview = null
+  $('modal-file-preview').classList.add('hidden')
 }
 
 function showFsProgress(pct, loaded, total) {
@@ -3057,6 +3128,7 @@ async function loadLocalVersion() {
  */
 const ANNOUNCEMENTS_KEY = 'seenAnnouncementsV1'
 const ANNOUNCEMENT_HISTORY_KEY = 'announcementHistoryV1'
+const ANNOUNCEMENT_VOTES_KEY = 'announcementVotesV1'
 function readSeenAnnouncements() {
   try {
     const value = JSON.parse(LS.get(ANNOUNCEMENTS_KEY, '{}'))
@@ -3073,6 +3145,32 @@ function markAnnouncementSeen(id) {
     for (const key of keys.slice(0, keys.length - 100)) delete seen[key]
   }
   LS.set(ANNOUNCEMENTS_KEY, JSON.stringify(seen))
+}
+function readAnnouncementVotes() {
+  try {
+    const value = JSON.parse(LS.get(ANNOUNCEMENT_VOTES_KEY, '{}'))
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  } catch { return {} }
+}
+function announcementVoteKey(announcementId, pollId) {
+  return `${announcementId}\u0000${pollId}`
+}
+function storeAnnouncementVote(announcementId, pollId, optionId) {
+  const votes = readAnnouncementVotes()
+  votes[announcementVoteKey(announcementId, pollId)] = { optionId, votedAt: Date.now() }
+  const keys = Object.keys(votes)
+  if (keys.length > 100) {
+    keys.sort((a, b) => Number(votes[a]?.votedAt || 0) - Number(votes[b]?.votedAt || 0))
+    for (const key of keys.slice(0, keys.length - 100)) delete votes[key]
+  }
+  LS.set(ANNOUNCEMENT_VOTES_KEY, JSON.stringify(votes))
+}
+function announcementVote(item) {
+  if (!item?.poll?.id) return null
+  const saved = readAnnouncementVotes()[announcementVoteKey(item.id, item.poll.id)]
+  if (!saved?.optionId) return null
+  const option = item.poll.options.find(entry => entry.id === saved.optionId)
+  return option ? { ...saved, option } : null
 }
 function readAnnouncementHistory() {
   try {
@@ -3098,7 +3196,11 @@ function renderAnnouncementHistory() {
   box.innerHTML = list.map(item => {
     const date = Number(item.publishedAt) > 0 ? fmtFullTime(item.publishedAt) : t('announcement.noDate')
     const action = item.actionUrl ? `<a class="announcement-action" href="${esc(item.actionUrl)}" target="_blank" rel="noopener">${esc(item.actionText || t('announcement.open'))}</a>` : ''
-    return `<details class="announcement-history-item"><summary><span>${esc(item.title)}</span><small>${esc(date)}</small></summary><div class="announcement-history-content">${esc(item.content).replace(/\r?\n/g, '<br>')}${action}</div></details>`
+    const vote = announcementVote(item)
+    const pollAction = item.poll ? (vote
+      ? `<div class="announcement-poll-status">${esc(t('announcement.voteThanks', { option: vote.option.label }))}</div>`
+      : `<button class="mini-btn" type="button" data-announcement-poll="${esc(item.id)}">${esc(t('announcement.voteFromHistory'))}</button>`) : ''
+    return `<details class="announcement-history-item"><summary><span>${esc(item.title)}</span><small>${esc(date)}</small></summary><div class="announcement-history-content">${esc(item.content).replace(/\r?\n/g, '<br>')}${action}${pollAction}</div></details>`
   }).join('')
 }
 function openAnnouncementHistory() {
@@ -3116,6 +3218,23 @@ function announcementVersionMatch(item) {
   if (max && cmpVersion(state.localVersion, max) > 0) return false
   return true
 }
+function normalizeAnnouncementPoll(value, announcementId) {
+  if (!value || typeof value !== 'object') return null
+  const id = String(value.id || announcementId || '').trim().slice(0, 120)
+  const question = String(value.question || '').trim().slice(0, 300)
+  if (!id || !question || !Array.isArray(value.options)) return null
+  const seen = new Set()
+  const options = []
+  for (const raw of value.options.slice(0, 8)) {
+    const optionId = String(raw?.id || '').trim().slice(0, 120)
+    const label = String(raw?.label || '').trim().slice(0, 200)
+    if (!optionId || !label || seen.has(optionId)) continue
+    seen.add(optionId)
+    options.push({ id: optionId, label, description: String(raw?.description || '').trim().slice(0, 500) })
+  }
+  return options.length >= 2 ? { id, question, options } : null
+}
+
 function normalizeAnnouncement(item, base) {
   if (!item || typeof item !== 'object') return null
   const id = String(item.id || '').trim().slice(0, 120)
@@ -3139,13 +3258,34 @@ function normalizeAnnouncement(item, base) {
     id, title, content, actionUrl,
     actionText: String(item.actionText || '').trim().slice(0, 80),
     publishedAt: Number.isFinite(startsAt) ? startsAt : 0,
-    force: item.force === true
+    force: item.force === true,
+    poll: normalizeAnnouncementPoll(item.poll, id)
   }
+}
+function renderAnnouncementPoll(item) {
+  const panel = $('announcement-poll')
+  const poll = item?.poll
+  panel.classList.toggle('hidden', !poll)
+  if (!poll) return
+  const vote = announcementVote(item)
+  $('announcement-poll-question').textContent = poll.question
+  $('announcement-poll-options').innerHTML = poll.options.map(option => `
+    <label class="announcement-poll-option">
+      <input type="radio" name="announcement-poll-option" value="${esc(option.id)}"${vote?.optionId === option.id ? ' checked' : ''}${vote ? ' disabled' : ''}>
+      <span><strong>${esc(option.label)}</strong>${option.description ? `<small>${esc(option.description)}</small>` : ''}</span>
+    </label>`).join('')
+  const status = $('announcement-poll-status')
+  status.textContent = vote ? t('announcement.voteThanks', { option: vote.option.label }) : ''
+  status.classList.toggle('hidden', !vote)
+  const submit = $('announcement-poll-submit')
+  submit.classList.toggle('hidden', !!vote)
+  submit.disabled = true
 }
 function openAnnouncementModal(item) {
   state.announcement = item
   $('announcement-title').textContent = item.title
   $('announcement-content').innerHTML = esc(item.content).replace(/\r?\n/g, '<br>')
+  renderAnnouncementPoll(item)
   const action = $('announcement-action')
   if (item.actionUrl) {
     action.href = item.actionUrl
@@ -3163,6 +3303,48 @@ function closeAnnouncement(markSeen) {
   if (markSeen && state.announcement) markAnnouncementSeen(state.announcement.id)
   state.announcement = null
   $('modal-announcement').classList.add('hidden')
+}
+async function submitAnnouncementVote() {
+  const item = state.announcement
+  const poll = item?.poll
+  const optionId = document.querySelector('input[name="announcement-poll-option"]:checked')?.value || ''
+  const option = poll?.options.find(entry => entry.id === optionId)
+  if (!poll || !option) return toast(t('announcement.voteChoose'), 'err')
+  const button = $('announcement-poll-submit')
+  button.disabled = true
+  try {
+    const base = updateBase()
+    if (!base) throw new Error(t('announcement.voteNetworkError'))
+    const res = await fetch(base + '/feedback', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + state.token },
+      body: JSON.stringify({
+        type: 'poll',
+        message: `Poll ${poll.id}: ${option.id}`,
+        announcementId: item.id,
+        pollId: poll.id,
+        optionId: option.id,
+        appVersion: state.localVersion
+      })
+    })
+    const data = await res.json().catch(() => ({}))
+    if (res.ok && data.ok) {
+      storeAnnouncementVote(item.id, poll.id, option.id)
+      markAnnouncementSeen(item.id)
+      renderAnnouncementPoll(item)
+      renderAnnouncementHistory()
+      toast(t('announcement.voteThanks', { option: option.label }), 'ok')
+    } else if (res.status === 429) {
+      toast(t('announcement.voteAgainLater'), 'err')
+      button.disabled = false
+    } else {
+      toast(t('announcement.voteFailed', { msg: data.error || res.status }), 'err')
+      button.disabled = false
+    }
+  } catch (e) {
+    toast(t('announcement.voteFailed', { msg: e.message || t('announcement.voteNetworkError') }), 'err')
+    button.disabled = false
+  }
 }
 async function checkAnnouncements() {
   const base = updateBase()
@@ -3557,9 +3739,24 @@ function deletePreset(id) {
 
 /* ---------------- 峰谷计费提醒(前台服务进程内定时, 绕开 MIUI 后台限制) ---------------- */
 function peakRemindOn() { return LS.get('peakRemind', '0') === '1' }
+const LEGACY_PEAK_NOTIFICATION_IDS = [8801, 8802, 8803, 8804]
 
-async function schedulePeakReminders() {
+async function cancelLegacyPeakNotifications() {
   if (!CAP?.isNativePlatform?.()) return false
+  const notifications = CAP.Plugins?.LocalNotifications
+  if (!notifications?.cancel) return true
+  try {
+    await notifications.cancel({ notifications: LEGACY_PEAK_NOTIFICATION_IDS.map(id => ({ id })) })
+    return true
+  } catch (error) {
+    console.warn('Failed to cancel legacy peak reminders', error)
+    return false
+  }
+}
+
+async function schedulePeakReminders({ legacyCleaned = false } = {}) {
+  if (!CAP?.isNativePlatform?.()) return false
+  if (!legacyCleaned && !await cancelLegacyPeakNotifications()) return false
   const b = bgBridge()
   if (!b?.startPeakReminder) return false
   try {
@@ -3572,8 +3769,17 @@ async function cancelPeakReminders() {
   const b = bgBridge()
   if (!b?.stopPeakReminder) return false
   try {
-    return b.stopPeakReminder() !== false
+    const stopped = b.stopPeakReminder() !== false
+    const legacyCleaned = await cancelLegacyPeakNotifications()
+    return stopped && legacyCleaned
   } catch { return false }
+}
+
+async function restorePeakReminders() {
+  if (!CAP?.isNativePlatform?.()) return
+  // 旧版使用 LocalNotifications 每日调度；无论当前开关状态都先清理，防止与前台服务重复提醒。
+  const legacyCleaned = await cancelLegacyPeakNotifications()
+  if (peakRemindOn() && legacyCleaned) await schedulePeakReminders({ legacyCleaned: true })
 }
 
 /* ---------------- 视图切换 ---------------- */
@@ -4410,9 +4616,19 @@ function bindUi() {
   $('modal-announcement').addEventListener('click', (e) => {
     if (e.target === $('modal-announcement') && !state.announcement?.force) closeAnnouncement(false)
   })
+  $('announcement-poll-submit').addEventListener('click', submitAnnouncementVote)
+  $('announcement-poll-options').addEventListener('change', (e) => {
+    if (e.target?.name === 'announcement-poll-option') $('announcement-poll-submit').disabled = !e.target.checked
+  })
   $('announcement-history-close').addEventListener('click', closeAnnouncementHistory)
   $('modal-announcement-history').addEventListener('click', (e) => {
     if (e.target === $('modal-announcement-history')) closeAnnouncementHistory()
+  })
+  $('announcement-history-list').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-announcement-poll]')
+    if (!btn) return
+    const item = readAnnouncementHistory().find(entry => entry.id === btn.dataset.announcementPoll)
+    if (item) openAnnouncementModal(item)
   })
   // 设置
   $('view-settings').addEventListener('click', (e) => {
@@ -4495,8 +4711,8 @@ function bindUi() {
   })
   $('btn-test-notify').addEventListener('click', sendTestNotification)
   $('btn-announcement-history').addEventListener('click', openAnnouncementHistory)
-  // 已开启则启动时重新调度, 防止系统清理后丢失
-  if (peakRemindOn() && CAP?.isNativePlatform?.()) schedulePeakReminders()
+  // 已开启则启动时重新调度, 防止系统清理后丢失; 顺带清理旧版 LocalNotifications 重复提醒
+  restorePeakReminders()
   applyBgConfigFromNative()
   $('opt-bg-poll').addEventListener('change', async (e) => {
     if (e.target.checked) {
@@ -4568,6 +4784,17 @@ function bindUi() {
   $('fs-pause-btn').addEventListener('click', pauseFsUpload)
   $('fs-cancel-btn').addEventListener('click', cancelFsUpload)
   bindFsPullRefresh()
+
+  // 文件预览弹窗
+  $('file-preview-close')?.addEventListener('click', closeFsPreview)
+  $('file-preview-done')?.addEventListener('click', closeFsPreview)
+  $('modal-file-preview')?.addEventListener('click', (e) => { if (e.target === $('modal-file-preview')) closeFsPreview() })
+  $('file-preview-source-tab')?.addEventListener('click', () => showFsPreviewMode('source'))
+  $('file-preview-rendered-tab')?.addEventListener('click', () => showFsPreviewMode('rendered'))
+  $('file-preview-download')?.addEventListener('click', () => {
+    const preview = state.fs.preview
+    if (preview?.path) downloadFsPath(preview.path, preview.name)
+  })
 
   bindRail()
 

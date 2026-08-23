@@ -9,7 +9,8 @@ DSH Remote **mod 分支** bundle 插件（独立包名，与上游 `dsh-remote-p
 - **修复 prompt 转写连接失败**：网关 `/transcribe` 补上 CORS 预检应答，App / 跨源环境下「连接测试 / 转写」不再误报「网络错误，请检查网络或 API 地址」；
 - **转写经网关代理 + 流式输出**：OpenAI 兼容 API 请求由网关转发（规避手机 WebView 的 CORS 限制），逐字流式呈现，带连接/功能测试与空闲/总时长双超时保护；
 - **反馈渠道本地化**：移除 App 内「写反馈 / 直接提交」入口，反馈改走 GitHub Issues / B站 / 邮箱；去除原作者赞助功能；
-- **上游 0.6.10 稳定性修复集成**（事件通道自动重连、图片后回复进窗、并发卡片不重复追加子代理等）与多项体验修复（桌面归档开关、管理双入口统一、令牌轮换 401 收敛等）。
+- **上游 0.6.10 稳定性修复集成**（事件通道自动重连、图片后回复进窗、并发卡片不重复追加子代理等）与多项体验修复（桌面归档开关、管理双入口统一、令牌轮换 401 收敛等）；
+- **上游 v0.6.11 功能整合**（v0.7.3-mod）：投票公告（票落本机网关 `~/.dsh-remote/poll-votes.jsonl`，`scripts/summarize-polls.mjs` 汇总，不依赖第三方收集器）、文件预览（文本/代码/Markdown ≤1MB，Markdown 支持源码/渲染切换）、周末全天谷时（统计计费与 App 峰谷提醒同步，并清理旧版重复提醒）、插件图标随 DSH 主题自适应。
 
 各版本详细变更见 [GitHub Releases](https://github.com/produce123/dsh-Remote-mod/releases)。
 
@@ -20,8 +21,8 @@ DSH Remote **mod 分支** bundle 插件（独立包名，与上游 `dsh-remote-p
 dsh plugin --profile web add dsh-remote-mod-plugin
 
 # 指定版本，或本仓库 Releases 附带的 tgz 用本地路径安装
-dsh plugin --profile web add dsh-remote-mod-plugin@0.7.2-mod
-# dsh plugin --profile web add /绝对路径/dsh-remote-mod-plugin-0.7.2-mod.tgz
+dsh plugin --profile web add dsh-remote-mod-plugin@0.7.3-mod
+# dsh plugin --profile web add /绝对路径/dsh-remote-mod-plugin-0.7.3-mod.tgz
 ```
 
 重启 DSH Web 后刷新浏览器，左侧边栏会出现 DSH Remote 入口。
@@ -32,7 +33,7 @@ dsh plugin --profile web add dsh-remote-mod-plugin@0.7.2-mod
 - 管理控制台：端口、上游、设备、请求、Token 统计、二维码和令牌轮换；
 - 内置 `gateway.cjs`：默认监听 `0.0.0.0:8787`，带 Bearer token 鉴权；
 - 网关自愈：DSH 重启或网关意外退出后自动拉起，可在面板中停止或启动；
-- `/fs/*` 文件端点：列表、下载、分块上传、断点续传、暂停/继续/取消和 SHA-256 校验；
+- `/fs/*` 文件端点：列表、下载、文本预览、分块上传、断点续传、暂停/继续/取消和 SHA-256 校验；
 - 手机端、桌面端和管理页 WebUI，以及随插件分发的 Android APK。
 
 ## 手机端能力

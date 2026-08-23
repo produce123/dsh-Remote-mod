@@ -664,6 +664,12 @@
       <div class="announcement-kicker" data-i18n="announcement.label">公告</div>
       <div id="announcement-title" class="modal-title"></div>
       <div id="announcement-content" class="modal-body announcement-content"></div>
+      <div id="announcement-poll" class="announcement-poll hidden">
+        <div id="announcement-poll-question" class="announcement-poll-question"></div>
+        <div id="announcement-poll-options" class="announcement-poll-options" role="radiogroup"></div>
+        <div id="announcement-poll-status" class="announcement-poll-status hidden"></div>
+        <button id="announcement-poll-submit" class="btn primary" type="button" data-i18n="announcement.voteSubmit">提交投票</button>
+      </div>
       <a id="announcement-action" class="announcement-action hidden" target="_blank" rel="noopener"></a>
       <div class="modal-actions">
         <button id="announcement-later" class="btn subtle" data-i18n="announcement.later">稍后再看</button>
@@ -679,6 +685,28 @@
       <div id="announcement-history-list" class="announcement-history-list"></div>
       <div class="modal-actions">
         <button id="announcement-history-close" class="btn subtle" data-i18n="announcement.close">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 文本文件预览 -->
+  <div id="modal-file-preview" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card file-preview-card">
+      <div class="file-preview-head">
+        <div class="modal-title" id="file-preview-title" data-i18n="fs.previewTitle">文件预览</div>
+        <button id="file-preview-close" class="icon-btn" data-i18n-title="modal.close" data-i18n-aria="modal.close">×</button>
+      </div>
+      <code id="file-preview-path" class="workspace-path-scroll file-preview-path"></code>
+      <div id="file-preview-tabs" class="file-preview-tabs hidden">
+        <button id="file-preview-source-tab" class="mini-btn current" type="button" data-i18n="fs.source">源码</button>
+        <button id="file-preview-rendered-tab" class="mini-btn" type="button" data-i18n="fs.preview">预览</button>
+      </div>
+      <div id="file-preview-loading" class="empty" data-i18n="fs.previewLoading">正在加载文件…</div>
+      <pre id="file-preview-source" class="file-preview-source hidden"></pre>
+      <div id="file-preview-rendered" class="md file-preview-rendered hidden"></div>
+      <div class="modal-actions">
+        <button id="file-preview-download" class="btn subtle" data-i18n="fs.download">下载</button>
+        <button id="file-preview-done" class="btn primary" data-i18n="modal.close">关闭</button>
       </div>
     </div>
   </div>
@@ -786,6 +814,7 @@
         'question.submitted': '已提交回答', 'question.stale': '提问已不在待处理状态', 'question.submitFailed': '回答提交失败：{msg}',
         'jobs.title': '后台任务', 'jobs.empty': '暂无后台任务',
         'fs.loading': '加载中…', 'fs.up': '返回上级', 'fs.newWorkspace': '新建工作区', 'fs.upload': '上传', 'fs.pause': '暂停', 'fs.resume': '继续', 'fs.cancel': '取消',
+        'fs.previewTitle': '文件预览', 'fs.previewLoading': '正在加载文件…', 'fs.previewFailed': '无法预览：{msg}', 'fs.previewUnsupported': '该文件类型暂不支持预览', 'fs.previewTooLarge': '文件超过 1 MB，请下载后查看', 'fs.source': '源码', 'fs.preview': '预览', 'fs.download': '下载',
         'fs.pullDown': '下拉刷新', 'fs.pullRelease': '松开刷新', 'fs.refreshing': '刷新中…',
         'fs.noToken': '未设置令牌', 'fs.goSettings': '请先到「设置」页粘贴网关令牌',
         'fs.notFound': '目录不存在', 'fs.forbidden': '路径不在允许范围内',
@@ -830,7 +859,7 @@
         'settings.notifyTitle': '通知', 'settings.notifyDesc': '收到审批/提问时推送', 'settings.announcementHistoryTitle': '历史公告', 'settings.announcementHistoryDesc': '查看以前收到的公告', 'settings.announcementHistory': '查看记录',
         'settings.testNotifyTitle': '测试通知', 'settings.testNotifyDesc': '立即排一条 3 秒后的本地通知，用于排查系统通知限制', 'settings.testNotify': '发送测试通知',
         'settings.testNotifySent': '测试通知已排定，3 秒后到达', 'settings.testNotifyFailed': '发送测试通知失败：{msg}', 'settings.testNotifyUnavailable': '测试通知仅在 App 内可用',
-        'settings.peakRemindTitle': '峰谷计费提醒', 'settings.peakRemindDesc': '每天 9:00 / 12:00 / 14:00 / 18:00 推送峰谷切换（App 内有效）',
+        'settings.peakRemindTitle': '峰谷计费提醒', 'settings.peakRemindDesc': '工作日推送峰谷切换；周末全天谷时，仅 9:00 提醒一次（App 内有效）',
         'peakRemind.enterPeak': '已进入高峰计费时段', 'peakRemind.enterOff': '已进入空闲计费时段',
         'peakRemind.peak0912': '高峰 9:00-12:00', 'peakRemind.off1214': '空闲 12:00-14:00',
         'peakRemind.peak1418': '高峰 14:00-18:00', 'peakRemind.off1809': '空闲 18:00-次日 9:00',
@@ -887,6 +916,7 @@
         'modal.questionTitle': 'DSH 需要你回答', 'modal.later': '稍后', 'modal.submit': '提交',
         'modal.goalTitle': '目标控制', 'modal.close': '关闭', 'modal.updateGoal': '更新目标',
         'announcement.label': '公告', 'announcement.later': '稍后再看', 'announcement.gotIt': '知道了', 'announcement.open': '查看详情', 'announcement.historyLabel': '公告记录', 'announcement.historyTitle': '历史公告', 'announcement.historyEmpty': '暂无历史公告', 'announcement.close': '关闭', 'announcement.noDate': '未标注日期',
+        'announcement.voteSubmit': '提交投票', 'announcement.voteChoose': '请先选择一项', 'announcement.voteThanks': '已投票：{option}', 'announcement.voteFailed': '投票失败：{msg}', 'announcement.voteNetworkError': '网络错误', 'announcement.voteAgainLater': '提交太频繁，请稍后再试', 'announcement.voteFromHistory': '参与投票',
         'modal.statsTitle': '本轮统计',
         'time.justNow': '刚刚', 'time.minAgo': ' 分钟前', 'time.hourAgo': ' 小时前'
       },
@@ -989,6 +1019,7 @@
         'question.submitted': 'Answer submitted', 'question.stale': 'Question is no longer pending', 'question.submitFailed': 'Answer failed: {msg}',
         'jobs.title': 'Background jobs', 'jobs.empty': 'No background jobs',
         'fs.loading': 'Loading…', 'fs.up': 'Up one level', 'fs.newWorkspace': 'New workspace', 'fs.upload': 'Upload', 'fs.pause': 'Pause', 'fs.resume': 'Resume', 'fs.cancel': 'Cancel',
+        'fs.previewTitle': 'File preview', 'fs.previewLoading': 'Loading file…', 'fs.previewFailed': 'Could not preview: {msg}', 'fs.previewUnsupported': 'This file type cannot be previewed', 'fs.previewTooLarge': 'File is larger than 1 MB; download it to view', 'fs.source': 'Source', 'fs.preview': 'Preview', 'fs.download': 'Download',
         'fs.pullDown': 'Pull to refresh', 'fs.pullRelease': 'Release to refresh', 'fs.refreshing': 'Refreshing…',
         'fs.noToken': 'No token set', 'fs.goSettings': 'Go to Settings and paste the gateway token first',
         'fs.notFound': 'Directory not found', 'fs.forbidden': 'Path is outside the allowed roots',
@@ -1033,7 +1064,7 @@
         'settings.notifyTitle': 'Notifications', 'settings.notifyDesc': 'Push on approvals / questions', 'settings.announcementHistoryTitle': 'Announcement history', 'settings.announcementHistoryDesc': 'Review announcements you received before', 'settings.announcementHistory': 'View history',
         'settings.testNotifyTitle': 'Test notification', 'settings.testNotifyDesc': 'Schedule a local notification in 3 seconds to verify the notification pipeline', 'settings.testNotify': 'Send test notification',
         'settings.testNotifySent': 'Test notification scheduled, arriving in 3s', 'settings.testNotifyFailed': 'Failed to send test notification: {msg}', 'settings.testNotifyUnavailable': 'Test notification is only available in the app',
-        'settings.peakRemindTitle': 'Peak/off-peak reminders', 'settings.peakRemindDesc': 'Push at 9:00 / 12:00 / 14:00 / 18:00 daily (in-app only)',
+        'settings.peakRemindTitle': 'Peak/off-peak reminders', 'settings.peakRemindDesc': 'Weekday transitions; weekends are off-peak all day with one reminder at 9:00 (app only)',
         'peakRemind.enterPeak': 'Peak pricing period started', 'peakRemind.enterOff': 'Off-peak pricing period started',
         'peakRemind.peak0912': 'Peak 9:00-12:00', 'peakRemind.off1214': 'Off-peak 12:00-14:00',
         'peakRemind.peak1418': 'Peak 14:00-18:00', 'peakRemind.off1809': 'Off-peak 18:00-9:00 next day',
@@ -1090,6 +1121,7 @@
         'modal.questionTitle': 'DSH needs your answer', 'modal.later': 'Later', 'modal.submit': 'Submit',
         'modal.goalTitle': 'Goal control', 'modal.close': 'Close', 'modal.updateGoal': 'Update goal',
         'announcement.label': 'Announcement', 'announcement.later': 'Later', 'announcement.gotIt': 'Got it', 'announcement.open': 'View details', 'announcement.historyLabel': 'Announcement archive', 'announcement.historyTitle': 'Announcement history', 'announcement.historyEmpty': 'No announcement history', 'announcement.close': 'Close', 'announcement.noDate': 'No date',
+        'announcement.voteSubmit': 'Submit vote', 'announcement.voteChoose': 'Choose an option first', 'announcement.voteThanks': 'Voted: {option}', 'announcement.voteFailed': 'Vote failed: {msg}', 'announcement.voteNetworkError': 'Network error', 'announcement.voteAgainLater': 'Too many submissions; try again later', 'announcement.voteFromHistory': 'Vote now',
         'modal.statsTitle': 'This round',
         'time.justNow': 'just now', 'time.minAgo': ' min ago', 'time.hourAgo': ' hr ago'
       }

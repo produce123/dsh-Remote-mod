@@ -71,6 +71,8 @@ const DSH_HEALTH_PATH = String(process.env.DSH_HEALTH_PATH || '/').startsWith('/
 const TOKEN_FILE = process.env.TOKEN_FILE || path.join(os.homedir(), '.dsh-remote', 'token')
 const NOTES_FILE = process.env.DSH_REMOTE_NOTES || path.join(os.homedir(), '.dsh-remote', 'device-notes.json')
 const WORKBENCH_FILE = process.env.DSH_REMOTE_WORKBENCH || path.join(os.homedir(), '.dsh-remote', 'workbench.json')
+// 投票记录: mod fork 不依赖第三方收集器, 投票直接落本地 JSONL, 用 scripts/summarize-polls.mjs 汇总。
+const POLL_VOTES_FILE = process.env.DSH_REMOTE_POLL_VOTES || path.join(os.homedir(), '.dsh-remote', 'poll-votes.jsonl')
 const STARTED_AT = Date.now()
 const DSH_SERVICE = String(process.env.DSH_REMOTE_DSH_SERVICE || 'dsh-web').trim()
 const HTTP_REQUEST_TIMEOUT_MS = durationEnv('GATEWAY_HTTP_REQUEST_TIMEOUT_MS', 15 * 60 * 1000, 0, 24 * 60 * 60 * 1000)
@@ -166,6 +168,14 @@ const FS_MIME = {
   '.epub': 'application/epub+zip',
   '.wasm': 'application/wasm',
 }
+const FS_PREVIEW_MAX = 1024 * 1024
+const FS_PREVIEW_EXTENSIONS = new Set([
+  '.txt', '.md', '.markdown', '.log', '.json', '.jsonl', '.js', '.mjs', '.cjs', '.jsx',
+  '.ts', '.tsx', '.py', '.css', '.html', '.htm', '.xml', '.yaml', '.yml', '.toml',
+  '.ini', '.conf', '.env', '.sh', '.bash', '.zsh', '.fish', '.sql', '.java', '.kt',
+  '.kts', '.go', '.rs', '.c', '.h', '.cpp', '.hpp', '.cs', '.php', '.rb', '.vue',
+  '.svelte', '.gradle', '.properties', '.gitignore', '.dockerfile'
+])
 
 // ---------- token ----------
 function loadToken() {
@@ -1004,6 +1014,45 @@ function maskIp(ip) {
   return s
 }
 
+/** 校验投票载荷: 公告/投票/选项必须在 announcements.json 中真实存在, 防止乱填。 */
+function validatePollVote(payload) {
+  const announcementId = String(payload.announcementId || '').trim()
+  const pollId = String(payload.pollId || '').trim()
+  const optionId = String(payload.optionId || '').trim()
+  if (!announcementId || !pollId || !optionId) return { error: 'poll fields required' }
+  if (announcementId.length > 120 || pollId.length > 120 || optionId.length > 120) return { error: 'poll fields too long' }
+  let source
+  try { source = JSON.parse(fs.readFileSync(path.join(PUBLIC_DIR, 'announcements.json'), 'utf8')) } catch { return { error: 'poll config unavailable' } }
+  const items = Array.isArray(source) ? source : (Array.isArray(source?.items) ? source.items : [source])
+  const announcement = items.find(item => String(item?.id || '').trim() === announcementId)
+  const poll = announcement?.poll
+  if (!poll || String(poll.id || '').trim() !== pollId || !Array.isArray(poll.options)) return { error: 'poll not found' }
+  const option = poll.options.find(item => String(item?.id || '').trim() === optionId)
+  if (!option) return { error: 'poll option not found' }
+  const optionLabel = String(option.label || '').trim().slice(0, 200)
+  if (!optionLabel) return { error: 'poll option invalid' }
+  return { announcementId, pollId, optionId, optionLabel }
+}
+
+/** 投票落本地 JSONL(~/.dsh-remote/poll-votes.jsonl), 供 scripts/summarize-polls.mjs 汇总。 */
+function storePollVote(valid, ip) {
+  try {
+    fs.mkdirSync(path.dirname(POLL_VOTES_FILE), { recursive: true })
+    fs.appendFileSync(POLL_VOTES_FILE, JSON.stringify({
+      type: 'poll',
+      time: new Date().toISOString(),
+      announcementId: valid.announcementId,
+      pollId: valid.pollId,
+      optionId: valid.optionId,
+      optionLabel: valid.optionLabel,
+      clientIp: maskIp(ip)
+    }) + '\n')
+    return true
+  } catch {
+    return false
+  }
+}
+
 function serveFeedback(req, res, url) {
   cors(res)
   if (req.method === 'OPTIONS') {
@@ -1037,14 +1086,23 @@ function serveFeedback(req, res, url) {
       return
     }
     const type = payload.type
-    const message = String(payload.message || '').trim()
+    let message = String(payload.message || '').trim()
     const contact = String(payload.contact || '').trim()
     const appVersion = String(payload.appVersion || '').trim()
-    if (!['bug', 'suggestion', 'other'].includes(type)) {
+    if (!['bug', 'suggestion', 'other', 'poll'].includes(type)) {
       res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
-      res.end(JSON.stringify({ error: 'invalid type', expect: 'bug|suggestion|other' }))
+      res.end(JSON.stringify({ error: 'invalid type', expect: 'bug|suggestion|other|poll' }))
       return
     }
+    const pollVote = type === 'poll' ? validatePollVote(payload) : null
+    if (pollVote?.error) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: pollVote.error }))
+      return
+    }
+    // 公网收集器的旧版只保留 type/message 等通用字段; 结构化字段和稳定的
+    // message 编码同时带上, 旧收集器也能用 scripts/summarize-polls.mjs 汇总。
+    if (pollVote) message = 'POLL ' + JSON.stringify({ announcementId: pollVote.announcementId, pollId: pollVote.pollId, optionId: pollVote.optionId })
     if (!message) {
       res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({ error: 'message required' }))
@@ -1067,6 +1125,19 @@ function serveFeedback(req, res, url) {
     if (now - last < FEEDBACK_WINDOW_MS) {
       res.writeHead(429, { 'content-type': 'application/json; charset=utf-8', 'retry-after': String(Math.ceil((FEEDBACK_WINDOW_MS - (now - last)) / 1000)) })
       res.end(JSON.stringify({ error: 'rate_limited', retryAfter: Math.ceil((FEEDBACK_WINDOW_MS - (now - last)) / 1000) }))
+      return
+    }
+
+    // mod fork: 投票不依赖第三方收集器, 校验通过后直接落本地 JSONL。
+    if (pollVote) {
+      if (!storePollVote(pollVote, ip)) {
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: 'poll_store_failed' }))
+        return
+      }
+      feedbackThrottle.set(ip, now)
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true }))
       return
     }
 
@@ -1503,6 +1574,46 @@ function fsFile(req, res, url) {
     : fs.createReadStream(checked.abs)
   stream.on('error', () => { try { res.destroy() } catch {} })
   stream.pipe(res)
+}
+
+/** 文本文件预览: 仅允许白名单扩展名 + ≤1MB, 返回纯文本内容(前端负责渲染)。 */
+function fsPreview(req, res, url) {
+  if (req.method !== 'GET') {
+    res.writeHead(405, { allow: 'GET' })
+    res.end()
+    return
+  }
+  if (!fsAuthorized(req, url, res)) return
+  const resolved = fsResolve(url.searchParams.get('path') ?? '')
+  if (resolved.error) return fsJson(res, resolved.error === 'forbidden' ? 403 : 404, { error: resolved.error })
+  const checked = fsRealChecked(resolved.abs)
+  if (checked.error) return fsJson(res, checked.error === 'forbidden' ? 403 : 404, { error: checked.error })
+
+  let st
+  try { st = fs.statSync(checked.abs) } catch (err) {
+    return fsJson(res, err.code === 'ENOENT' ? 404 : 403, { error: err.code === 'ENOENT' ? 'not-found' : 'permission-denied' })
+  }
+  if (!st.isFile()) return fsJson(res, 400, { error: 'not-a-file' })
+
+  const name = path.basename(checked.abs)
+  const lowerName = name.toLowerCase()
+  const extension = lowerName === 'dockerfile' ? '.dockerfile' : path.extname(lowerName)
+  if (!FS_PREVIEW_EXTENSIONS.has(extension)) {
+    return fsJson(res, 415, { error: 'preview-unsupported', extension })
+  }
+  if (st.size > FS_PREVIEW_MAX) {
+    return fsJson(res, 413, { error: 'preview-too-large', size: st.size, limit: FS_PREVIEW_MAX })
+  }
+
+  let content
+  try {
+    const bytes = fs.readFileSync(checked.abs)
+    if (bytes.includes(0)) return fsJson(res, 415, { error: 'preview-binary' })
+    content = bytes.toString('utf8')
+  } catch (err) {
+    return fsJson(res, 403, { error: 'permission-denied', detail: err.message })
+  }
+  fsJson(res, 200, { name, path: resolved.abs, extension, size: st.size, content })
 }
 
 function fsValidName(name) {
@@ -1968,6 +2079,7 @@ function serveFs(req, res, url) {
 
   if (sub === '/list') return fsList(req, res, url)
   if (sub === '/file') return fsFile(req, res, url)
+  if (sub === '/preview') return fsPreview(req, res, url)
   if (sub === '/mkdir') return fsMkdir(req, res, url)
   if (sub === '/upload-probe') return fsUploadProbe(req, res, url)
   if (sub === '/upload-control') return fsUploadControl(req, res, url)

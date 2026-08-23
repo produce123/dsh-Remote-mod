@@ -15,6 +15,24 @@
       "minVersion": "0.6.9",
       "maxVersion": "",
       "publishedAt": "2026-08-22T12:00:00+08:00"
+    },
+    {
+      "id": "2026-08-23-v0.7.3-mod",
+      "title": "v0.7.3-mod：投票公告、文件预览与周末谷时上线",
+      "content": "本次 mod 更新整合了上游 v0.6.11 的几项实用功能，并做了适配改造：\n\n1. 投票公告：公告里可以附带投票，投出的票会记录在你自己的网关（~/.dsh-remote/poll-votes.jsonl），不会发给任何第三方，你可以在服务器上用 scripts/summarize-polls.mjs 汇总结果；\n2. 文件预览：手机端文件页直接点开文本/代码/Markdown 文件即可预览（≤1MB），Markdown 还能切换渲染视图；\n3. 周末全天谷时：统计计费与 App 峰谷提醒同步改为周末不计高峰价（周末只在 9:00 提醒一次），并自动清理旧版重复的本地提醒；\n4. 插件图标跟随 DSH 主题自适应（深浅色）。\n\n欢迎大家投票选出下个版本最想看到的功能，或通过反馈渠道（GitHub Issues / B站 / 邮箱）直接告诉我。感谢支持！",
+      "minVersion": "0.7.3-mod",
+      "maxVersion": "",
+      "publishedAt": "2026-08-23T20:00:00+08:00",
+      "poll": {
+        "id": "v0.7.3-priority",
+        "question": "下个版本你最期待哪个方向？",
+        "options": [
+          { "id": "transcribe", "label": "转写能力增强", "description": "更多模型/格式支持、转写历史记录" },
+          { "id": "files", "label": "文件管理增强", "description": "重命名/删除/移动、压缩包预览" },
+          { "id": "desktop", "label": "桌面端体验", "description": "与手机端对齐更多能力" },
+          { "id": "stability", "label": "稳定性与兼容性", "description": "连接可靠性、更多 ROM 通知适配" }
+        ]
+      }
     }
   ]
 }

@@ -400,6 +400,83 @@ test('Range：合法 bytes=0-9 返回 206，越界范围返回 416', async () =>
   assert.equal(body.error, 'range-not-satisfiable')
 })
 
+test('文件预览：文本 200、二进制/大文件/不支持扩展名拒绝、越权 403、鉴权 401', async () => {
+  fs.writeFileSync(path.join(tmpRoot, 'note.md'), '# 你好\n\n世界')
+  fs.writeFileSync(path.join(tmpRoot, 'big.txt'), 'x'.repeat(1024 * 1024 + 1))
+  fs.writeFileSync(path.join(tmpRoot, 'binary.bin'), Buffer.from([0x00, 0x01, 0x02]))
+  fs.writeFileSync(path.join(tmpRoot, 'archive.zip'), 'PK')
+
+  const ok = await fetch(fsUrl('/fs/preview', { path: path.join(tmpRoot, 'note.md') }), { headers: authHeaders() })
+  assert.equal(ok.status, 200)
+  const body = await ok.json()
+  assert.equal(body.name, 'note.md')
+  assert.equal(body.extension, '.md')
+  assert.ok(body.content.includes('你好'))
+
+  const noAuth = await fetch(fsUrl('/fs/preview', { path: path.join(tmpRoot, 'note.md') }))
+  assert.equal(noAuth.status, 401)
+
+  const outside = await fetch(fsUrl('/fs/preview', { path: path.join(path.dirname(tmpRoot), 'secret.txt') }), { headers: authHeaders() })
+  assert.equal(outside.status, 403)
+
+  const unsupported = await fetch(fsUrl('/fs/preview', { path: path.join(tmpRoot, 'archive.zip') }), { headers: authHeaders() })
+  assert.equal(unsupported.status, 415)
+
+  const tooLarge = await fetch(fsUrl('/fs/preview', { path: path.join(tmpRoot, 'big.txt') }), { headers: authHeaders() })
+  assert.equal(tooLarge.status, 413)
+
+  const binary = await fetch(fsUrl('/fs/preview', { path: path.join(tmpRoot, 'binary.bin') }), { headers: authHeaders() })
+  assert.equal(binary.status, 415)
+})
+
+test('投票：合法投票落本地 JSONL，非法选项 400，重复提交 429', async () => {
+  const announcements = JSON.parse(fs.readFileSync(path.join(ROOT, 'public', 'announcements.json'), 'utf8'))
+  const items = Array.isArray(announcements) ? announcements : (announcements.items || [])
+  const pollAnnouncement = items.find(item => item?.poll)
+  assert.ok(pollAnnouncement, 'announcements.json 里应有一个带 poll 的公告')
+  const poll = pollAnnouncement.poll
+  const option = poll.options[0]
+
+  const votesFile = path.join(tmpRoot, '.dsh-remote', 'poll-votes.jsonl')
+  fs.rmSync(votesFile, { force: true })
+
+  const post = (payload) => fetch(`${base}/feedback`, {
+    method: 'POST',
+    headers: authHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify(payload),
+  })
+
+  // 非 poll 类型且未配置收集器: 不转发、不占节流位
+  const feedback = await post({ type: 'suggestion', message: 'hello' })
+  assert.equal(feedback.status, 200)
+  const fb = await feedback.json()
+  assert.equal(fb.noCollector, true)
+
+  // 缺少字段
+  let res = await post({ type: 'poll' })
+  assert.equal(res.status, 400)
+
+  // 不存在的选项
+  res = await post({ type: 'poll', announcementId: pollAnnouncement.id, pollId: poll.id, optionId: 'nope' })
+  assert.equal(res.status, 400)
+
+  // 合法投票
+  res = await post({ type: 'poll', announcementId: pollAnnouncement.id, pollId: poll.id, optionId: option.id, appVersion: '0.7.3-mod' })
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.ok, true)
+
+  const saved = JSON.parse(fs.readFileSync(votesFile, 'utf8').trim())
+  assert.equal(saved.type, 'poll')
+  assert.equal(saved.announcementId, pollAnnouncement.id)
+  assert.equal(saved.pollId, poll.id)
+  assert.equal(saved.optionId, option.id)
+
+  // 同 IP 节流: 60s 窗口内第二次提交 429
+  res = await post({ type: 'poll', announcementId: pollAnnouncement.id, pollId: poll.id, optionId: poll.options[1].id })
+  assert.equal(res.status, 429)
+})
+
 test('分块续传 + SHA-256：正常提交成功，错误校验失败', async () => {
   const name = 'upload.bin'
   const session = `it-session-${Date.now()}`

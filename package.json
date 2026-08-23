@@ -1,6 +1,6 @@
 {
   "name": "dsh-remote",
-  "version": "0.7.2-mod",
+  "version": "0.7.3-mod",
   "private": true,
   "dsh": {
     "bundle": {
@@ -15,7 +15,7 @@
     }
   },
   "description": "DSH 移动远程控制台: DSH 插件(内置网关自启停) + 独立网关 + Android App 一体",
-  "updateNotes": "0.7.2-mod：修复 prompt 转写「连接测试/转写请求」在 App 与跨源环境下失败的问题（根因：网关 /transcribe 未应答 CORS 预检请求，跨域 POST 被浏览器拦截并误报「网络错误，请检查网络或 API 地址」）；手机端移除「写反馈 / App 内直接提交」入口（保留 GitHub / B站 / 邮箱 / 复制链接渠道）；README 重写（去掉逐版本回顾，改为「上游项目 + 修改清单 + 安装使用」结构），插件介绍补充与上游 dsh-remote 的差异说明。",
+  "updateNotes": "0.7.3-mod：整合上游 v0.6.11 —— ① 投票公告：公告可附带投票，票记录在本机网关 ~/.dsh-remote/poll-votes.jsonl（不依赖第三方收集器），可用 scripts/summarize-polls.mjs 汇总；② 文件预览：文件页直接点开文本/代码/Markdown（≤1MB）预览，Markdown 支持源码/渲染切换；③ 周末全天谷时：统计计费与 App 峰谷提醒改为周末不计高峰价（周末仅 9:00 提醒一次），并自动清理旧版重复的本地提醒；④ 插件侧边栏图标随 DSH 主题自适应；⑤ README 同步更新。",
   "bin": "gateway.js",
   "pkg": {
     "assets": [
@@ -30,7 +30,7 @@
   },
   "scripts": {
     "start": "node gateway.js",
-    "check": "node --check gateway.js && node --check gateway-stats.cjs && node --check packages/plugin/index.mjs && node --check public/app.js && node --check public/admin.js && node --check public/i18n.js && node --check public/theme.js && node --check public/sha256.js && node --check public/md.js && node --check public/history-core.js && node --check public/transcribe-core.js && node --check public/desktop/desktop.js && node --check public/desktop/i18n.js && node --test tests/stats.test.js tests/gateway.test.js tests/md.test.js tests/network-regression.test.js tests/history.test.js tests/transcribe-core.test.js tests/lifecycle.test.js tests/plugin-autostart.test.js tests/plugin-runtime.test.js tests/user-flows.test.js",
+    "check": "node --check gateway.js && node --check gateway-stats.cjs && node --check packages/plugin/index.mjs && node --check public/app.js && node --check public/admin.js && node --check public/i18n.js && node --check public/theme.js && node --check public/sha256.js && node --check public/md.js && node --check public/history-core.js && node --check public/transcribe-core.js && node --check public/desktop/desktop.js && node --check public/desktop/i18n.js && node --test tests/stats.test.js tests/gateway.test.js tests/md.test.js tests/network-regression.test.js tests/history.test.js tests/transcribe-core.test.js tests/lifecycle.test.js tests/plugin-autostart.test.js tests/plugin-runtime.test.js tests/user-flows.test.js tests/poll-summary.test.js",
     "test-stats": "node --test tests/stats.test.js",
     "sync-app": "npx cap sync android",
     "build-app": "node scripts/prepare-version.mjs && npx cap sync android && cd android && ./gradlew assembleDebug",
