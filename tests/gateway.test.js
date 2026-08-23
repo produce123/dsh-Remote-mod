@@ -310,123 +310,18 @@ async function waitForPollEvents(kind, minCount = 1, timeoutMs = 5000) {
 }
 
 test('鉴权：无 token / 错误 token 拒绝，正确 token 通过', async () => {
-  const noToken = await fetch(`${base}/fs/list`)
+  const noToken = await fetch(`${base}/workbench`)
   assert.equal(noToken.status, 401)
 
-  const wrongToken = await fetch(`${base}/fs/list`, {
+  const wrongToken = await fetch(`${base}/workbench`, {
     headers: { authorization: 'Bearer wrong-token' }
   })
   assert.equal(wrongToken.status, 401)
 
-  const ok = await fetch(`${base}/fs/list`, { headers: authHeaders() })
+  const ok = await fetch(`${base}/workbench`, { headers: authHeaders() })
   assert.equal(ok.status, 200)
   const body = await ok.json()
-  assert.ok(Array.isArray(body.entries))
-  assert.ok(body.entries.some((e) => e.name === 'hello.txt'))
-})
-
-test('多文件根使用当前平台路径分隔符', async () => {
-  const res = await fetch(fsUrl('/fs/list', { path: secondaryRoot }), { headers: authHeaders() })
-  assert.equal(res.status, 200)
-  const body = await res.json()
-  assert.ok(body.entries.some((e) => e.name === 'second-root.txt'))
-})
-
-test('路径穿越 / 绝对路径逃逸拒绝', async () => {
-  // 用临时目录外、可能不存在的绝对路径即可：fsResolve 先做词法根检查，必然 403
-  const outsideAbs = path.join(path.dirname(tmpRoot), 'dsh-remote-outside-does-not-exist.txt')
-  const cases = [
-    '/fs/list?path=' + encodeURIComponent('../'),
-    '/fs/list?path=' + encodeURIComponent('../../outside'),
-    '/fs/list?path=' + encodeURIComponent(outsideAbs),
-    '/fs/file?path=' + encodeURIComponent(outsideAbs),
-    '/fs/file?path=' + encodeURIComponent('../outside.txt')
-  ]
-
-  for (const suffix of cases) {
-    const res = await fetch(base + suffix, { headers: authHeaders() })
-    assert.equal(res.status, 403, suffix)
-    const body = await res.json()
-    assert.equal(body.error, 'forbidden', suffix)
-  }
-})
-
-test('符号链接逃逸：列表隐藏、直读拒绝', async (t) => {
-  const outsideFile = path.join(
-    path.dirname(tmpRoot),
-    `dsh-remote-outside-${process.pid}-${Date.now()}.txt`
-  )
-  const link = path.join(tmpRoot, 'escape.txt')
-  fs.writeFileSync(outsideFile, 'secret')
-  try {
-    fs.symlinkSync(outsideFile, link)
-  } catch (err) {
-    fs.rmSync(outsideFile, { force: true })
-    t.skip('symlink not supported on this platform: ' + err.message)
-    return
-  }
-
-  try {
-    const listRes = await fetch(fsUrl('/fs/list', { path: tmpRoot }), { headers: authHeaders() })
-    assert.equal(listRes.status, 200)
-    const list = await listRes.json()
-    assert.ok(!list.entries.some((e) => e.name === 'escape.txt'), '外逃 symlink 不应出现在列表')
-
-    const fileRes = await fetch(fsUrl('/fs/file', { path: link }), { headers: authHeaders() })
-    assert.equal(fileRes.status, 403)
-    const body = await fileRes.json()
-    assert.equal(body.error, 'forbidden')
-  } finally {
-    fs.rmSync(outsideFile, { force: true })
-    fs.rmSync(link, { force: true })
-  }
-})
-
-test('Range：合法 bytes=0-9 返回 206，越界范围返回 416', async () => {
-  const url = fsUrl('/fs/file', { path: path.join(tmpRoot, 'hello.txt') })
-
-  const ok = await fetch(url, {
-    headers: authHeaders({ range: 'bytes=0-9' })
-  })
-  assert.equal(ok.status, 206)
-  assert.equal(await ok.text(), '0123456789')
-  assert.equal(ok.headers.get('content-range'), 'bytes 0-9/16')
-
-  const bad = await fetch(url, {
-    headers: authHeaders({ range: 'bytes=99-100' })
-  })
-  assert.equal(bad.status, 416)
-  const body = await bad.json()
-  assert.equal(body.error, 'range-not-satisfiable')
-})
-
-test('文件预览：文本 200、二进制/大文件/不支持扩展名拒绝、越权 403、鉴权 401', async () => {
-  fs.writeFileSync(path.join(tmpRoot, 'note.md'), '# 你好\n\n世界')
-  fs.writeFileSync(path.join(tmpRoot, 'big.txt'), 'x'.repeat(1024 * 1024 + 1))
-  fs.writeFileSync(path.join(tmpRoot, 'binary.bin'), Buffer.from([0x00, 0x01, 0x02]))
-  fs.writeFileSync(path.join(tmpRoot, 'archive.zip'), 'PK')
-
-  const ok = await fetch(fsUrl('/fs/preview', { path: path.join(tmpRoot, 'note.md') }), { headers: authHeaders() })
-  assert.equal(ok.status, 200)
-  const body = await ok.json()
-  assert.equal(body.name, 'note.md')
-  assert.equal(body.extension, '.md')
-  assert.ok(body.content.includes('你好'))
-
-  const noAuth = await fetch(fsUrl('/fs/preview', { path: path.join(tmpRoot, 'note.md') }))
-  assert.equal(noAuth.status, 401)
-
-  const outside = await fetch(fsUrl('/fs/preview', { path: path.join(path.dirname(tmpRoot), 'secret.txt') }), { headers: authHeaders() })
-  assert.equal(outside.status, 403)
-
-  const unsupported = await fetch(fsUrl('/fs/preview', { path: path.join(tmpRoot, 'archive.zip') }), { headers: authHeaders() })
-  assert.equal(unsupported.status, 415)
-
-  const tooLarge = await fetch(fsUrl('/fs/preview', { path: path.join(tmpRoot, 'big.txt') }), { headers: authHeaders() })
-  assert.equal(tooLarge.status, 413)
-
-  const binary = await fetch(fsUrl('/fs/preview', { path: path.join(tmpRoot, 'binary.bin') }), { headers: authHeaders() })
-  assert.equal(binary.status, 415)
+  assert.equal(body.bound, false)
 })
 
 test('投票：合法投票落本地 JSONL，非法选项 400，重复提交 429', async () => {
@@ -477,74 +372,6 @@ test('投票：合法投票落本地 JSONL，非法选项 400，重复提交 429
   assert.equal(res.status, 429)
 })
 
-test('分块续传 + SHA-256：正常提交成功，错误校验失败', async () => {
-  const name = 'upload.bin'
-  const session = `it-session-${Date.now()}`
-  const part1 = Buffer.from('Hello ')
-  const part2 = Buffer.from('World!')
-  const content = Buffer.concat([part1, part2])
-
-  // 第一块：offset=0
-  let res = await fetch(fsUrl('/fs/upload', { path: tmpRoot, name, session, offset: 0 }), {
-    method: 'POST',
-    headers: authHeaders({ 'content-type': 'application/octet-stream' }),
-    body: part1
-  })
-  assert.equal(res.status, 200)
-  let body = await res.json()
-  assert.equal(body.partial, true)
-  assert.equal(body.offset, part1.length)
-
-  // 第二块：offset=6
-  res = await fetch(fsUrl('/fs/upload', {
-    path: tmpRoot, name, session, offset: part1.length
-  }), {
-    method: 'POST',
-    headers: authHeaders({ 'content-type': 'application/octet-stream' }),
-    body: part2
-  })
-  assert.equal(res.status, 200)
-  body = await res.json()
-  assert.equal(body.offset, content.length)
-
-  // probe 应看到已传大小
-  const probe = await fetch(fsUrl('/fs/upload-probe', { path: tmpRoot, name, session }), {
-    headers: authHeaders()
-  })
-  assert.equal(probe.status, 200)
-  const probeBody = await probe.json()
-  assert.equal(probeBody.partialSize, content.length)
-
-  // 正确 sha256 -> 201，文件落位
-  const goodSha = crypto.createHash('sha256').update(content).digest('hex')
-  res = await fetch(fsUrl('/fs/upload', {
-    path: tmpRoot, name, session, offset: content.length, finish: 1, sha256: goodSha
-  }), {
-    method: 'POST',
-    headers: authHeaders({ 'content-type': 'application/octet-stream' }),
-    body: Buffer.alloc(0)
-  })
-  assert.equal(res.status, 201)
-  body = await res.json()
-  assert.equal(body.ok, true)
-  assert.equal(fs.readFileSync(path.join(tmpRoot, name)).toString(), content.toString())
-
-  // 错误 sha256 -> 422，目标文件不得落位
-  const badName = 'bad.bin'
-  const badSession = `bad-session-${Date.now()}`
-  const badSha = '0'.repeat(64)
-  res = await fetch(fsUrl('/fs/upload', {
-    path: tmpRoot, name: badName, session: badSession, offset: 0, finish: 1, sha256: badSha
-  }), {
-    method: 'POST',
-    headers: authHeaders({ 'content-type': 'application/octet-stream' }),
-    body: Buffer.from('nope')
-  })
-  assert.equal(res.status, 422)
-  body = await res.json()
-  assert.equal(body.error, 'checksum-mismatch')
-  assert.equal(fs.existsSync(path.join(tmpRoot, badName)), false)
-})
 
 test('静态文件与 update.json：根页面、version.json、update.json 可访问', async () => {
   const idx = await fetch(`${base}/`)
@@ -594,12 +421,13 @@ test('工作台：鉴权、绑定根目录校验、持久化与解绑', async ()
   assert.equal(res.status, 400)
   assert.equal((await res.json()).error, 'bad-path')
 
+  // mod: 绑定不再校验文件传输根，仅要求存在的目录；不存在的路径 404。
   res = await fetch(`${base}/workbench/bind`, {
     method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }),
-    body: JSON.stringify({ path: path.dirname(tmpRoot) })
+    body: JSON.stringify({ path: path.join(tmpRoot, 'does-not-exist-dir') })
   })
   assert.equal(res.status, 400)
-  assert.equal((await res.json()).error, 'outside-roots')
+  assert.equal((await res.json()).error, 'not-found')
 
   const boundPath = path.join(tmpRoot, 'sub')
   res = await fetch(`${base}/workbench/bind`, {
@@ -623,35 +451,7 @@ test('工作台：鉴权、绑定根目录校验、持久化与解绑', async ()
   assert.deepEqual(await res.json(), { bound: false })
 })
 
-test('工作区目录：创建成功、重复创建冲突、非法名称拒绝', async () => {
-  const name = 'workspace-' + Date.now()
-  let res = await fetch(fsUrl('/fs/mkdir', { path: tmpRoot, name }), {
-    method: 'POST', headers: authHeaders()
-  })
-  assert.equal(res.status, 201)
-  const created = await res.json()
-  assert.equal(created.ok, true)
-  assert.equal(created.name, name)
-
-  res = await fetch(fsUrl('/fs/list', { path: tmpRoot }), { headers: authHeaders() })
-  assert.equal(res.status, 200)
-  const list = await res.json()
-  assert.ok(list.entries.some(e => e.type === 'dir' && e.name === name))
-
-  res = await fetch(fsUrl('/fs/mkdir', { path: tmpRoot, name }), {
-    method: 'POST', headers: authHeaders()
-  })
-  assert.equal(res.status, 409)
-  assert.equal((await res.json()).error, 'exists')
-
-  res = await fetch(fsUrl('/fs/mkdir', { path: tmpRoot, name: '../escape' }), {
-    method: 'POST', headers: authHeaders()
-  })
-  assert.equal(res.status, 400)
-  assert.equal((await res.json()).error, 'bad-name')
-})
-
-test('远程 DSH 控制接口：鉴权与动作校验', async () => {
+test('远程 DSH 控制接口：鉴权与动作校验（异步 operation 轮询）', async () => {
   const preflight = await fetch(`${base}/admin/api/dsh`, {
     method: 'OPTIONS',
     headers: {
@@ -663,7 +463,7 @@ test('远程 DSH 控制接口：鉴权与动作校验', async () => {
   assert.equal(preflight.status, 204)
   assert.equal(preflight.headers.get('access-control-allow-origin'), 'capacitor://localhost')
 
-  const deniedOrigin = await fetch(`${base}/fs/list`, {
+  const deniedOrigin = await fetch(`${base}/workbench`, {
     headers: authHeaders({ origin: 'https://evil.example' })
   })
   assert.equal(deniedOrigin.status, 200)
@@ -681,14 +481,40 @@ test('远程 DSH 控制接口：鉴权与动作校验', async () => {
   const body = await bad.json()
   assert.match(body.error, /start|restart/)
 
-  const valid = await fetch(`${base}/admin/api/dsh`, {
+  // v0.6.12: POST 立即 202 + operationId，前端轮询 GET ?operation= 看结果。
+  const accepted = await fetch(`${base}/admin/api/dsh`, {
     method: 'POST',
     headers: authHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({ action: 'start' })
   })
-  assert.equal(valid.status, 501)
-  const validBody = await valid.json()
-  assert.equal(validBody.supported, false)
+  assert.equal(accepted.status, 202)
+  const operation = await accepted.json()
+  assert.equal(operation.accepted, true)
+  assert.ok(operation.operationId)
+  assert.equal(operation.done, false)
+
+  const deadline = Date.now() + 15000
+  let final = null
+  while (Date.now() < deadline) {
+    const poll = await fetch(`${base}/admin/api/dsh?operation=${encodeURIComponent(operation.operationId)}`, {
+      headers: authHeaders()
+    })
+    assert.equal(poll.status, 200)
+    const value = await poll.json()
+    if (value.done) { final = value; break }
+    await new Promise(r => setTimeout(r, 100))
+  }
+  assert.ok(final, 'operation 应在限时内完成')
+  // Windows 上系统返回 PLATFORM_UNSUPPORTED；Linux CI 上无 systemd 用户会话则报 SYSTEMD_UNAVAILABLE。
+  assert.equal(final.ok, false)
+  assert.ok(['PLATFORM_UNSUPPORTED', 'SYSTEMD_UNAVAILABLE', 'SYSTEMCTL_NOT_FOUND', 'PERMISSION_DENIED'].includes(final.code))
+
+  // 不存在的 operation id → 404
+  const missing = await fetch(`${base}/admin/api/dsh?operation=${encodeURIComponent('no-such-op')}`, {
+    headers: authHeaders()
+  })
+  assert.equal(missing.status, 404)
+  assert.equal((await missing.json()).code, 'OPERATION_NOT_FOUND')
 })
 
 test('事件轮询：鉴权 401', async () => {

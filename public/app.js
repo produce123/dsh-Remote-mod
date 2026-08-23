@@ -77,7 +77,7 @@ const state = {
   streamMode: 'ws', // 'ws' | 'poll'
   pollSeq: { mux: 0, host: 0 },
   refreshTimer: null,
-  fs: { path: null, initial: null, loaded: false, upload: null },
+  announcements: [],
   composerImages: [], // 当前草稿中的图片附件：只在发送成功后释放
   models: { loaded: false, loading: false, groups: [], current: null, failures: [] },
   wb: null,
@@ -1200,11 +1200,6 @@ function wbStrictInside(pathValue, rootValue) {
   if (!pathKey || !rootKey || pathKey === rootKey) return false
   return pathKey.startsWith(rootKey.endsWith('/') ? rootKey : rootKey + '/')
 }
-function wbJoin(root, name) {
-  const raw = String(root || '')
-  const separator = raw.includes('\\') ? '\\' : '/'
-  return raw.replace(/[\\/]+$/, '') + separator + String(name || '')
-}
 function workbenchRoot() {
   return state.wb?.bound && state.wb.path ? state.wb.path : ''
 }
@@ -1227,29 +1222,7 @@ async function refreshWorkbench() {
     state.wbProjects = []
     state.wbArchived = []
   }
-  // 以磁盘实际目录为准同步工作台项目：删除目录后不再残留，新增子目录自动收纳。
-  if (state.wb?.bound && state.wb.path) {
-    try {
-      const listRes = await fetch(fsApiUrl('/list', { path: state.wb.path }), { headers: fsHeaders() })
-      if (listRes.ok) {
-        const listData = await listRes.json().catch(() => ({}))
-        if (Array.isArray(listData.entries)) {
-          const diskDirs = new Set(listData.entries.filter(e => e.type === 'dir').map(e => wbPathKey(wbJoin(state.wb.path, e.name))))
-          state.wbProjects = state.wbProjects.filter(w => diskDirs.has(wbPathKey(w.path)))
-          const have = new Set(state.wbProjects.map(w => wbPathKey(w.path)))
-          for (const entry of listData.entries) {
-            if (entry.type !== 'dir') continue
-            const projectPath = wbJoin(state.wb.path, entry.name)
-            if (have.has(wbPathKey(projectPath))) continue
-            try {
-              const created = await rpc('workspace.create', { path: projectPath })
-              if (created?.workspace) { state.wbProjects.push(created.workspace); have.add(wbPathKey(projectPath)) }
-            } catch {}
-          }
-        }
-      }
-    } catch {}
-  }
+  // 工作台项目直接以 DSH 已登记的工作区为准(mod 已移除文件传输, 不再扫描磁盘目录)。
   renderWorkbench()
   renderSessions()
 }
@@ -1427,10 +1400,6 @@ function bindNativeBack() {
       const openModal = [...document.querySelectorAll('.modal')].find(m => !m.classList.contains('hidden'))
       if (openModal) { if (openModal.id === 'modal-notes') closeNotesModal(); else if (openModal.id === 'modal-archive') closeArchiveConfirm(); else openModal.classList.add('hidden'); return }   // 先关弹窗
       if (document.body.classList.contains('in-session')) { closeSession(); return } // 会话页 → 回主页
-      if (!$('view-files').classList.contains('hidden')) {           // 文件页 → 上级目录 → 主页
-        if (state.fs.path && state.fs.initial && state.fs.path !== state.fs.initial) { fsUp(); return }
-        showView('view-home'); return
-      }
       try { CAP.Plugins?.App?.exitApp?.() } catch {}                  // 主页再返回 → 退出(与系统一致)
     })
   } catch {}
@@ -2429,7 +2398,7 @@ async function approveApproval(id, allow) {
     ok = await respond(a.rpcId, { sessionId: a.sessionId, approvalId: a.approvalId, outcome: allow ? 'allowed-once' : 'rejected' })
   } catch (e) {
     if (e.message === 'AUTH') authFailure()
-    else toast(t('pending.submitFailed', { msg: e.message || t('fs.networkError') }), 'err')
+    else toast(t('pending.submitFailed', { msg: e.message || t('err.networkError') }), 'err')
     return
   }
   toast(ok ? (allow ? t('pending.allowed') : t('pending.rejected')) : t('pending.stale'), ok ? 'ok' : 'err')
@@ -2467,7 +2436,7 @@ async function submitQuestion() {
     ok = await respond(q.rpcId, { sessionId: q.sessionId, answer: { answers } })
   } catch (e) {
     if (e.message === 'AUTH') authFailure()
-    else toast(t('question.submitFailed', { msg: e.message || t('fs.networkError') }), 'err')
+    else toast(t('question.submitFailed', { msg: e.message || t('err.networkError') }), 'err')
     return
   }
   if (ok) { toast(t('question.submitted'), 'ok'); $('modal-question').classList.add('hidden'); state.questions = state.questions.filter(x => x.rpcId !== q.rpcId); renderPending() }
@@ -2498,552 +2467,6 @@ function renderJobs() {
   }).join(''))
 }
 
-/* ---------------- 文件传输 ---------------- */
-function fsHeaders() {
-  return {
-    authorization: 'Bearer ' + state.token,
-    'x-dsh-remote-client': CAP?.isNativePlatform?.() ? 'app' : 'web'
-  }
-}
-
-function fsJoin(dir, name) {
-  return dir.replace(/\/+$/, '') + '/' + name
-}
-
-function fsParent(p) {
-  const clean = String(p || '').replace(/\/+$/, '')
-  const idx = clean.lastIndexOf('/')
-  if (idx <= 0) return clean === '' ? '' : '/'
-  return clean.slice(0, idx)
-}
-
-async function openWorkspaceModal() {
-  if (!state.token) { toast(t('fs.noTokenToast'), 'err'); showView('view-settings'); return }
-  if (!state.fs.path) await loadFs(null, { silent: true })
-  $('workspace-parent-path').textContent = state.fs.path || '~'
-  $('workspace-name').value = ''
-  $('modal-workspace').classList.remove('hidden')
-  setTimeout(() => $('workspace-name').focus(), 50)
-}
-function closeWorkspaceModal() { $('modal-workspace').classList.add('hidden') }
-async function createWorkspace() {
-  if (createWorkspace.busy) return
-  const name = $('workspace-name').value.trim()
-  if (!name) { toast(t('workspace.nameRequired'), 'err'); $('workspace-name').focus(); return }
-  createWorkspace.busy = true
-  const parent = state.fs.path || ''
-  const button = $('workspace-create')
-  button.disabled = true
-  try {
-    const res = await fetch(fsApiUrl('/mkdir', { path: parent, name }), { method: 'POST', headers: fsHeaders() })
-    if (res.status === 401) { fsAuthError(401); return }
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      const msg = data.error === 'exists' ? t('workspace.exists') : data.error === 'bad-name' ? t('workspace.invalidName') : data.error || ('HTTP ' + res.status)
-      throw new Error(msg)
-    }
-    closeWorkspaceModal()
-    await loadFs(parent || null, { silent: true })
-    const v = await safeRpc('session.create', { cwd: data.path }, t('home.createFailed'))
-    await refreshSessions()
-    if (v?.sessionId) {
-      toast(t('workspace.created'), 'ok')
-      openSession(v.sessionId)
-    } else {
-      toast(t('workspace.createdNoSession'), 'ok')
-    }
-  } catch (e) {
-    if (e.message === 'AUTH') fsAuthError(401)
-    else toast(t('workspace.createFailed', { msg: e.message || t('fs.networkError') }), 'err')
-  } finally {
-    createWorkspace.busy = false
-    button.disabled = false
-  }
-}
-
-function fsApiUrl(sub, params = {}) {
-  const u = new URL(apiUrl('/fs' + sub), location.href)
-  for (const [k, v] of Object.entries(params)) {
-    if (v != null && v !== '') u.searchParams.set(k, v)
-  }
-  return u.href
-}
-
-function fsAuthError(status) {
-  if (status === 401) authFailure()
-}
-
-async function loadFs(dir, { silent = false, resetRoot = false } = {}) {
-  if (!state.token) {
-    $('fs-path').textContent = t('fs.noToken')
-    $('fs-list').innerHTML = '<div class="empty">' + t('fs.goSettings') + '</div>'
-    return
-  }
-  if (resetRoot) { state.fs.initial = null; state.fs.path = null }
-  const target = dir ?? state.fs.path ?? ''
-  if (!silent) {
-    $('fs-list').innerHTML = '<div class="empty">' + t('fs.loading') + '</div>'
-    $('fs-path').textContent = target ? '…' + target.slice(-40) : t('fs.loading')
-  }
-  try {
-    const res = await fetch(fsApiUrl('/list', target ? { path: target } : {}), { headers: fsHeaders() })
-    if (res.status === 401) { fsAuthError(401); return }
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok || !Array.isArray(data.entries)) throw new Error(data.error === 'not-found' ? t('fs.notFound') : data.error === 'forbidden' ? t('fs.forbidden') : data.error || ('HTTP ' + res.status))
-    state.fs.path = data.path
-    if (!state.fs.initial) state.fs.initial = data.path
-    state.fs.loaded = true
-    renderFs(data)
-  } catch (e) {
-    if (e.message === 'AUTH') return
-    $('fs-path').textContent = target || '~'
-    $('fs-list').innerHTML = `<div class="empty">${esc(t('fs.loadFailed', { msg: e.message || t('fs.networkError') }))}</div>`
-    if (!silent) toast(t('fs.loadFailedToast', { msg: e.message }), 'err')
-  }
-}
-
-function renderFs(data) {
-  $('fs-path').textContent = data.path || '~'
-  const list = $('fs-list')
-  if (!data.entries.length) {
-    list.innerHTML = '<div class="empty">' + t('fs.emptyDir') + '</div>'
-    return
-  }
-  list.innerHTML = data.entries.map(e => {
-    const isDir = e.type === 'dir'
-    const preview = !isDir && fsCanPreview(e.name, e.size)
-    return `<div class="fs-row" data-name="${esc(e.name)}" data-type="${esc(e.type)}" data-size="${Number(e.size) || 0}">
-      <span class="fs-ico">${fsIconSvg(isDir)}</span>
-      <span class="fs-meta">
-        <span class="fs-name">${esc(e.name)}</span>
-        <span class="fs-sub">${isDir ? t('fs.dir') : fmtSize(e.size)} · ${fmtFullTime(e.mtimeMs)}</span>
-      </span>
-      <span class="fs-arrow">${isDir || preview ? '›' : '↓'}</span>
-    </div>`
-  }).join('')
-  list.querySelectorAll('.fs-row').forEach(row =>
-    row.addEventListener('click', () => fsOpenEntry(row.dataset.name, row.dataset.type, Number(row.dataset.size))))
-}
-
-function fsIconSvg(isDir) {
-  return isDir
-    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6.5h6l2 2H20a1 1 0 0 1 1 1v8.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7.5a1 1 0 0 1 .5-1Z"/></svg>'
-    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5h8l4 4V20a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z"/><path d="M14 3.5v4h4M8 13h8M8 16h6"/></svg>'
-}
-
-function fsOpenEntry(name, type, size = 0) {
-  if (!name) return
-  const p = fsJoin(state.fs.path, name)
-  if (type === 'dir') return loadFs(p)
-  if (fsCanPreview(name, size)) return openFsPreview(p, name)
-  downloadFsFile(name)
-}
-
-const FS_PREVIEW_EXTENSIONS = new Set([
-  '.txt', '.md', '.markdown', '.log', '.json', '.jsonl', '.js', '.mjs', '.cjs', '.jsx',
-  '.ts', '.tsx', '.py', '.css', '.html', '.htm', '.xml', '.yaml', '.yml', '.toml',
-  '.ini', '.conf', '.env', '.sh', '.bash', '.zsh', '.fish', '.sql', '.java', '.kt',
-  '.kts', '.go', '.rs', '.c', '.h', '.cpp', '.hpp', '.cs', '.php', '.rb', '.vue',
-  '.svelte', '.gradle', '.properties', '.gitignore', '.dockerfile'
-])
-function fsPreviewExtension(name) {
-  const lower = String(name || '').toLowerCase()
-  if (lower === 'dockerfile') return '.dockerfile'
-  const dot = lower.lastIndexOf('.')
-  return dot >= 0 ? lower.slice(dot) : ''
-}
-function fsCanPreview(name, size) {
-  return Number(size) <= 1024 * 1024 && FS_PREVIEW_EXTENSIONS.has(fsPreviewExtension(name))
-}
-
-function downloadFsFile(name) {
-  const p = fsJoin(state.fs.path, name)
-  downloadFsPath(p, name)
-}
-
-function downloadFsPath(p, name) {
-  const url = fsApiUrl('/file', { path: p })
-  if (CAP?.isNativePlatform?.()) {
-    if (window.NativeFile?.downloadToDownloads) {
-      try {
-        window.NativeFile.downloadToDownloads(url, name, state.token)
-        toast(t('fs.downloadStarted'), 'ok')
-      } catch (e) {
-        toast(t('fs.downloadFailed', { msg: e?.message || '' }), 'err')
-      }
-      return
-    }
-    toast(t('fs.downloadUnsupported'), 'err')
-    return
-  }
-  // 浏览器控制台: <a download> + ?token= 兜底(主通道仍是 Bearer 头)
-  const a = document.createElement('a')
-  const u = new URL(url)
-  u.searchParams.set('token', state.token)
-  a.href = u.href
-  a.download = name
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-}
-
-let fsPreviewGeneration = 0
-async function openFsPreview(pathValue, name) {
-  const generation = ++fsPreviewGeneration
-  state.fs.preview = { path: pathValue, name, extension: fsPreviewExtension(name), content: '' }
-  $('file-preview-title').textContent = name
-  $('file-preview-path').textContent = pathValue
-  $('file-preview-loading').textContent = t('fs.previewLoading')
-  $('file-preview-loading').classList.remove('hidden')
-  $('file-preview-source').classList.add('hidden')
-  $('file-preview-rendered').classList.add('hidden')
-  $('file-preview-tabs').classList.add('hidden')
-  $('modal-file-preview').classList.remove('hidden')
-  try {
-    const res = await fetch(fsApiUrl('/preview', { path: pathValue }), { headers: fsHeaders() })
-    if (res.status === 401) { closeFsPreview(); fsAuthError(401); return }
-    const data = await res.json().catch(() => ({}))
-    if (generation !== fsPreviewGeneration) return
-    if (!res.ok) {
-      const message = data.error === 'preview-too-large' ? t('fs.previewTooLarge')
-        : (data.error === 'preview-unsupported' || data.error === 'preview-binary') ? t('fs.previewUnsupported')
-          : t('fs.previewFailed', { msg: data.error || ('HTTP ' + res.status) })
-      throw new Error(message)
-    }
-    state.fs.preview = data
-    $('file-preview-loading').classList.add('hidden')
-    $('file-preview-source').textContent = data.content || ''
-    const markdown = data.extension === '.md' || data.extension === '.markdown'
-    $('file-preview-tabs').classList.toggle('hidden', !markdown)
-    if (markdown) $('file-preview-rendered').innerHTML = window.mdToHtml(data.content || '')
-    showFsPreviewMode(markdown ? 'rendered' : 'source')
-  } catch (e) {
-    if (generation !== fsPreviewGeneration) return
-    $('file-preview-loading').textContent = e.message || t('fs.previewFailed', { msg: t('fs.networkError') })
-  }
-}
-function showFsPreviewMode(mode) {
-  const rendered = mode === 'rendered' && !($('file-preview-tabs').classList.contains('hidden'))
-  $('file-preview-source').classList.toggle('hidden', rendered)
-  $('file-preview-rendered').classList.toggle('hidden', !rendered)
-  $('file-preview-source-tab').classList.toggle('current', !rendered)
-  $('file-preview-rendered-tab').classList.toggle('current', rendered)
-}
-function closeFsPreview() {
-  fsPreviewGeneration++
-  state.fs.preview = null
-  $('modal-file-preview').classList.add('hidden')
-}
-
-function showFsProgress(pct, loaded, total) {
-  $('fs-progress').classList.remove('hidden')
-  $('fs-progress-bar').style.width = Math.max(2, Math.min(100, pct)) + '%'
-  $('fs-progress-text').textContent = `${pct}% · ${fmtSize(loaded)} / ${fmtSize(total)}`
-}
-
-function setFsProgressText(text) {
-  $('fs-progress-text').textContent = text
-}
-
-function hideFsProgress() {
-  $('fs-progress').classList.add('hidden')
-  $('fs-progress-bar').style.width = '0%'
-}
-
-function setFsButtons(show, paused = false) {
-  const pauseBtn = $('fs-pause-btn')
-  const cancelBtn = $('fs-cancel-btn')
-  if (!pauseBtn || !cancelBtn) return
-  pauseBtn.classList.toggle('hidden', !show)
-  cancelBtn.classList.toggle('hidden', !show)
-  if (show) pauseBtn.textContent = paused ? t('fs.resume') : t('fs.pause')
-}
-
-function pauseFsUpload() {
-  const up = state.fs.upload
-  if (!up) return
-  if (!up.active) {
-    if (up.paused) resumeFsUpload()
-    return
-  }
-  up.pauseRequested = true
-  try { up.xhr?.abort() } catch {}
-}
-
-function resumeFsUpload() {
-  const up = state.fs.upload
-  if (!up || !up.file) return
-  up.paused = false
-  runFsUpload(up)
-}
-
-async function cancelFsUpload() {
-  const up = state.fs.upload
-  if (!up) return
-  up.cancelled = true
-  try { up.xhr?.abort() } catch {}
-  try {
-    await fetch(fsApiUrl('/upload-control', { path: up.path, name: up.name, session: up.session, action: 'cancel' }), {
-      method: 'POST', headers: fsHeaders()
-    })
-  } catch {}
-  state.fs.upload = null
-  hideFsProgress()
-  setFsButtons(false)
-  toast(t('fs.uploadCancelled'))
-}
-
-const FS_CHUNK_SIZE = 4 * 1024 * 1024 // 4MB/块, 断线后重选同一文件自动续传
-
-/** 把文件 [start,end) 逐块喂给 hasher(续传时补齐已传前缀); 期间可被暂停打断 */
-async function hashFsRange(file, hasher, start, end, up) {
-  const step = FS_CHUNK_SIZE
-  for (let off = start; off < end; off += step) {
-    const buf = await file.slice(off, Math.min(off + step, end)).arrayBuffer()
-    if (up?.pauseRequested) {
-      const err = new Error(t('fs.pausedErr')); err.code = 'PAUSED'; throw err
-    }
-    hasher.update(new Uint8Array(buf))
-  }
-}
-
-function uploadFsFile(file) {
-  if (!file) return
-  if (!state.token) { toast(t('fs.noTokenToast'), 'err'); showView('view-settings'); return }
-  if (file.size > 2 * 1024 * 1024 * 1024) { toast(t('fs.tooLarge'), 'err'); return }
-  if (state.fs.upload?.active) { toast(t('fs.uploadBusy'), 'err'); return }
-
-  const prev = state.fs.upload
-  if (prev && prev.path === state.fs.path && prev.name === file.name && prev.size === file.size) {
-    prev.file = file
-    runFsUpload(prev)
-    return
-  }
-  // 换传别的文件: 顺手清掉旧任务的服务端分片, 不残留隐藏 .part
-  if (prev) {
-    prev.cancelled = true
-    try { prev.xhr?.abort() } catch {}
-    try {
-      fetch(fsApiUrl('/upload-control', { path: prev.path, name: prev.name, session: prev.session, action: 'cancel' }), {
-        method: 'POST', headers: fsHeaders()
-      })
-    } catch {}
-  }
-  const up = {
-    session: uuid(), path: state.fs.path, name: file.name, size: file.size,
-    offset: 0, file, xhr: null, active: false, paused: false, cancelled: false
-  }
-  state.fs.upload = up
-  runFsUpload(up)
-}
-
-async function runFsUpload(up) {
-  if (!up || !up.file) return
-  up.active = true
-  up.cancelled = false
-  up.paused = false
-  up.pauseRequested = false
-  setFsButtons(true, false)
-
-  const uploadChunk = (params, blob) => new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    up.xhr = xhr
-    xhr.open('POST', fsApiUrl('/upload', params))
-    xhr.setRequestHeader('authorization', 'Bearer ' + state.token)
-    xhr.setRequestHeader('x-dsh-remote-client', CAP?.isNativePlatform?.() ? 'app' : 'web')
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const loaded = up.offset + Math.min(e.loaded, e.total)
-        showFsProgress(Math.round(loaded / Math.max(1, up.size) * 100), loaded, up.size)
-      }
-    }
-    xhr.onload = () => {
-      if (up.xhr === xhr) up.xhr = null
-      let json = {}
-      try { json = JSON.parse(xhr.responseText || '{}') } catch {}
-      resolve({ status: xhr.status, json })
-    }
-    xhr.onerror = () => { if (up.xhr === xhr) up.xhr = null; reject(new Error(t('fs.networkError'))) }
-    xhr.upload.onerror = () => { if (up.xhr === xhr) up.xhr = null; reject(new Error(t('fs.networkInterrupt'))) }
-    xhr.onabort = () => {
-      if (up.xhr === xhr) up.xhr = null
-      const err = new Error(t(up.cancelled ? 'fs.cancelledErr' : 'fs.pausedErr'))
-      err.code = up.cancelled ? 'CANCELLED' : 'PAUSED'
-      reject(err)
-    }
-    xhr.send(blob)
-  })
-
-  const probe = async () => {
-    const res = await fetch(fsApiUrl('/upload-probe', { path: up.path, name: up.name, session: up.session }), { headers: fsHeaders() })
-    if (res.status === 401) { fsAuthError(401); return null }
-    const json = await res.json().catch(() => ({}))
-    if (json.ok) up.offset = json.partialSize || 0
-    return json
-  }
-
-  let overwrite = false
-  let wasResumed = false
-  let hasher = new SHA256()
-  try {
-    const info = await probe()
-    if (info === null || up.cancelled) return
-    if (info.partialSize > 0) wasResumed = true
-    if (info.targetExists && info.targetSize === up.size && !overwrite) {
-      if (!confirm(t('fs.confirmOverwrite'))) { state.fs.upload = null; hideFsProgress(); setFsButtons(false); return }
-      overwrite = true
-    }
-    if (up.offset > 0) await hashFsRange(up.file, hasher, 0, up.offset, up)
-    showFsProgress(Math.round(up.offset / Math.max(1, up.size) * 100), up.offset, up.size)
-
-    while (up.offset < up.size) {
-      if (up.cancelled) return
-      const end = Math.min(up.offset + FS_CHUNK_SIZE, up.size)
-      const blob = up.file.slice(up.offset, end)
-      const before = hasher.clone()
-      const chunkBytes = new Uint8Array(await blob.arrayBuffer())
-      if (up.pauseRequested) {
-        const err = new Error(t('fs.pausedErr')); err.code = 'PAUSED'; throw err
-      }
-      hasher.update(chunkBytes)
-      const isLast = end >= up.size
-      const params = { path: up.path, name: up.name, session: up.session, offset: String(up.offset) }
-      if (isLast) { params.finish = '1'; params.sha256 = hasher.hex() }
-      if (overwrite) params.overwrite = '1'
-      const r = await uploadChunk(params, blob)
-      if (r.status === 401) { fsAuthError(401); return }
-      if (r.status === 200 && r.json.offset != null) { up.offset = r.json.offset; continue }
-      if (r.status === 201) {
-        const expected = params.sha256 || hasher.hex()
-        if (r.json.sha256 && r.json.sha256 !== expected) {
-          const err = new Error(t('fs.checksumMismatch')); err.checksum = true
-          throw err
-        }
-        hideFsProgress()
-        setFsButtons(false)
-        state.fs.upload = null
-        toast(t('fs.uploadDone', { name: up.name, resumed: wasResumed ? t('fs.resumedSuffix') : '' }), 'ok')
-        loadFs()
-        return
-      }
-      if (r.status === 409 && r.json.error === 'conflict') {
-        hasher = before // 这段数据没被写入, 回退哈希状态后带 overwrite=1 重发
-        if (!confirm(t('fs.confirmOverwrite2'))) { state.fs.upload = null; hideFsProgress(); setFsButtons(false); return }
-        overwrite = true
-        continue
-      }
-      if (r.status === 409 && r.json.error === 'offset-mismatch') {
-        hasher = before
-        await probe()
-        continue
-      }
-      if (r.status === 422 && r.json.error === 'checksum-mismatch') {
-        const err = new Error(t('fs.checksumCleared'))
-        err.checksum = true
-        throw err
-      }
-      throw new Error(r.json.error || ('HTTP ' + r.status))
-    }
-
-    // offset 已到文件末尾但还没落位(0 字节文件 / 续传时最后一块已完成而 rename 被中断):
-    // 发一个空 finish 块完成收尾, 同时带上全量 SHA-256 校验
-    if (up.offset >= up.size) {
-      const expected = hasher.hex()
-      const params = { path: up.path, name: up.name, session: up.session, offset: String(up.offset), finish: '1', sha256: expected }
-      if (overwrite) params.overwrite = '1'
-      const r = await uploadChunk(params, new Blob([]))
-      if (r.status === 401) { fsAuthError(401); return }
-      if (r.status === 409 && r.json.error === 'conflict') {
-        if (!confirm(t('fs.confirmOverwrite2'))) { state.fs.upload = null; hideFsProgress(); setFsButtons(false); return }
-        params.overwrite = '1'
-        return runFsUpload(up) // 目标冲突未写入, 重新走 probe + 空 finish
-      }
-      if (r.status === 422 && r.json.error === 'checksum-mismatch') {
-        const err = new Error(t('fs.checksumCleared'))
-        err.checksum = true
-        throw err
-      }
-      if (r.status !== 201) throw new Error(r.json.error || ('HTTP ' + r.status))
-      if (r.json.sha256 && r.json.sha256 !== expected) {
-        const err = new Error(t('fs.checksumMismatch')); err.checksum = true
-        throw err
-      }
-      hideFsProgress()
-      setFsButtons(false)
-      state.fs.upload = null
-      toast(t('fs.uploadDone', { name: up.name, resumed: wasResumed ? t('fs.resumedSuffix') : '' }), 'ok')
-      loadFs()
-      return
-    }
-
-    hideFsProgress()
-    setFsButtons(false)
-  } catch (e) {
-    up.active = false
-    if (up.cancelled || e?.code === 'CANCELLED') return
-    if (e?.code === 'PAUSED') {
-      up.paused = true
-      setFsButtons(true, true)
-      setFsProgressText(t('fs.pausedPct', { pct: Math.round(up.offset / Math.max(1, up.size) * 100) }))
-      toast(t('fs.pausedToast'), 'ok')
-      return
-    }
-    if (e?.checksum) {
-      // 坏分片保留只会反复校验失败: 服务端删掉, 下一次「继续」从 0 完整重传
-      up.paused = true
-      up.offset = 0
-      try {
-        await fetch(fsApiUrl('/upload-control', { path: up.path, name: up.name, session: up.session, action: 'cancel' }), {
-          method: 'POST', headers: fsHeaders()
-        })
-      } catch {}
-      setFsButtons(true, true)
-      setFsProgressText(t('fs.checksumFailed'))
-      toast(e.message, 'err')
-      return
-    }
-    hideFsProgress()
-    setFsButtons(false)
-    toast(t('fs.uploadInterrupted', { msg: e.message }), 'err')
-  }
-}
-
-function fsUp() {
-  if (!state.fs.path || !state.fs.initial) return
-  if (state.fs.path === state.fs.initial) {
-    toast(t('fs.alreadyRoot'))
-    return
-  }
-  loadFs(fsParent(state.fs.path))
-}
-
-function bindFsPullRefresh() {
-  const view = $('view-files')
-  if (!view) return
-  const pull = $('fs-pull')
-  let startY = null
-  view.addEventListener('touchstart', (e) => {
-    if (window.scrollY <= 0) { startY = e.touches[0].clientY; pull.style.height = '0px' }
-  }, { passive: true })
-  view.addEventListener('touchmove', (e) => {
-    if (startY == null) return
-    const dy = e.touches[0].clientY - startY
-    if (dy > 4 && window.scrollY <= 0) {
-      pull.style.height = Math.min(64, dy / 2) + 'px'
-      pull.textContent = dy > 80 ? t('fs.pullRelease') : t('fs.pullDown')
-    }
-  }, { passive: true })
-  view.addEventListener('touchend', () => {
-    if (startY == null) return
-    const h = parseFloat(pull.style.height || '0')
-    startY = null
-    if (h >= 40) {
-      pull.textContent = t('fs.refreshing')
-      loadFs(null, { silent: true })
-    }
-    pull.style.height = '0px'
-  })
-}
 
 /* ---------------- goal 编辑 ---------------- */
 function openGoalModal(goal) {
@@ -3129,6 +2552,10 @@ async function loadLocalVersion() {
 const ANNOUNCEMENTS_KEY = 'seenAnnouncementsV1'
 const ANNOUNCEMENT_HISTORY_KEY = 'announcementHistoryV1'
 const ANNOUNCEMENT_VOTES_KEY = 'announcementVotesV1'
+const ANNOUNCEMENTS_POLL_MS = 30 * 1000
+let announcementCheckPromise = null
+let announcementPollTimer = null
+let announcementPollingStarted = false
 function readSeenAnnouncements() {
   try {
     const value = JSON.parse(LS.get(ANNOUNCEMENTS_KEY, '{}'))
@@ -3145,6 +2572,7 @@ function markAnnouncementSeen(id) {
     for (const key of keys.slice(0, keys.length - 100)) delete seen[key]
   }
   LS.set(ANNOUNCEMENTS_KEY, JSON.stringify(seen))
+  renderAnnouncementBoard()
 }
 function readAnnouncementVotes() {
   try {
@@ -3164,6 +2592,7 @@ function storeAnnouncementVote(announcementId, pollId, optionId) {
     for (const key of keys.slice(0, keys.length - 100)) delete votes[key]
   }
   LS.set(ANNOUNCEMENT_VOTES_KEY, JSON.stringify(votes))
+  renderAnnouncementBoard()
 }
 function announcementVote(item) {
   if (!item?.poll?.id) return null
@@ -3184,6 +2613,36 @@ function storeAnnouncementHistory(items) {
   const list = [...merged.values()].sort((a, b) => Number(b.publishedAt || 0) - Number(a.publishedAt || 0)).slice(0, 50)
   LS.set(ANNOUNCEMENT_HISTORY_KEY, JSON.stringify(list))
   return list
+}
+function announcementBoardItems() {
+  const seen = readSeenAnnouncements()
+  const merged = new Map(readAnnouncementHistory().map(item => [item.id, item]))
+  for (const item of state.announcements) if (item?.id) merged.set(item.id, item)
+  return [...merged.values()]
+    .filter(item => !seen[item.id])
+    .sort((a, b) => Number(b.publishedAt || 0) - Number(a.publishedAt || 0))
+    .slice(0, 1)
+}
+function renderAnnouncementBoard() {
+  const box = $('overview-announcement-list')
+  if (!box) return
+  const items = announcementBoardItems()
+  if (!items.length) {
+    box.innerHTML = `<div class="overview-empty">${esc(t('overview.communityEmpty'))}</div>`
+    return
+  }
+  box.innerHTML = items.map(item => {
+    const poll = !!item.poll
+    const vote = announcementVote(item)
+    const date = Number(item.publishedAt) > 0 ? fmtFullTime(item.publishedAt) : t('announcement.noDate')
+    const action = poll ? (vote ? t('overview.communityVoted') : t('overview.communityVote')) : t('overview.communityView')
+    return `<button class="overview-announcement-card ${poll ? 'poll' : 'notice'}" type="button" data-home-announcement="${esc(item.id)}">
+      <span class="overview-announcement-meta"><span class="overview-announcement-badge">${esc(t(poll ? 'overview.communityPoll' : 'overview.communityNotice'))}</span><span class="overview-announcement-new">${esc(t('overview.communityNew'))}</span><span class="overview-announcement-date">${esc(date)}</span></span>
+      <span class="overview-announcement-title">${esc(item.title)}</span>
+      <span class="overview-announcement-copy">${esc(item.content)}</span>
+      <span class="overview-announcement-footer"><span>${esc(action)}</span><span aria-hidden="true">›</span></span>
+    </button>`
+  }).join('')
 }
 function renderAnnouncementHistory() {
   const box = $('announcement-history-list')
@@ -3346,7 +2805,7 @@ async function submitAnnouncementVote() {
     button.disabled = false
   }
 }
-async function checkAnnouncements() {
+async function fetchAnnouncements() {
   const base = updateBase()
   if (!base || !state.localVersion) return false
   try {
@@ -3359,14 +2818,34 @@ async function checkAnnouncements() {
     const data = JSON.parse(raw)
     const source = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : [data])
     const normalized = source.map(item => normalizeAnnouncement(item, base)).filter(Boolean)
+    state.announcements = normalized.sort((a, b) => Number(b.publishedAt || 0) - Number(a.publishedAt || 0))
     storeAnnouncementHistory(normalized)
+    renderAnnouncementBoard()
     const seen = readSeenAnnouncements()
     const items = normalized.filter(item => !seen[item.id])
       .sort((a, b) => b.publishedAt - a.publishedAt)
-    if (!items.length) return false
+    if (!items.length || state.announcement) return false
     openAnnouncementModal(items[0])
     return true
   } catch { return false }
+}
+
+function checkAnnouncements() {
+  if (announcementCheckPromise) return announcementCheckPromise
+  announcementCheckPromise = fetchAnnouncements().finally(() => { announcementCheckPromise = null })
+  return announcementCheckPromise
+}
+
+function startAnnouncementPolling() {
+  if (announcementPollingStarted) return
+  announcementPollingStarted = true
+  announcementPollTimer = setInterval(() => {
+    if (!document.hidden) void checkAnnouncements()
+  }, ANNOUNCEMENTS_POLL_MS)
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) void checkAnnouncements()
+  })
+  window.addEventListener('online', () => { void checkAnnouncements() })
 }
 
 /* ---------------- 更新内容弹窗 ---------------- */
@@ -3484,7 +2963,7 @@ async function checkUpdate(silent) {
       if (!silent) toast(t('update.latestToast'), 'ok')
     }
   } catch (e) {
-    $('update-desc').textContent = t('update.checkFailedDesc', { msg: e.message || t('fs.networkError') })
+    $('update-desc').textContent = t('update.checkFailedDesc', { msg: e.message || t('err.networkError') })
     resetUpdateExpand()
     if (!silent) toast(t('update.checkFailed', { msg: e.message }), 'err')
   }
@@ -3543,7 +3022,7 @@ async function downloadUpdate() {
     } else if (verify.status) {
       toast(t('update.serverFileMissing'), 'err')
     } else {
-      toast(t('update.downloadFailed', { msg: verify.msg || t('fs.networkError') }), 'err')
+      toast(t('update.downloadFailed', { msg: verify.msg || t('err.networkError') }), 'err')
     }
     return
   }
@@ -3784,12 +3263,11 @@ async function restorePeakReminders() {
 
 /* ---------------- 视图切换 ---------------- */
 function showView(id) {
-  for (const v of ['view-home', 'view-files', 'view-session', 'view-activity', 'view-stats', 'view-settings']) $(v).classList.toggle('hidden', v !== id)
+  for (const v of ['view-home', 'view-session', 'view-activity', 'view-stats', 'view-settings']) $(v).classList.toggle('hidden', v !== id)
   // 离开会话页必须清掉 in-session, 否则其他页面顶栏被 body 样式隐藏
   document.body.classList.toggle('in-session', id === 'view-session')
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === id))
   window.scrollTo(0, 0)
-  if (id === 'view-files' && !state.fs.loaded) loadFs(null, { silent: true })
   if (id === 'view-stats') loadStats()
   if (id === 'view-settings') showSettingsHome()
 }
@@ -4299,36 +3777,155 @@ function initToken() {
   $('server-desc').textContent = state.server || t('servers.defaultDesc')
 }
 
-function renderDshControlStatus(v) {
-  const desc = $('dsh-control-desc')
-  if (!desc || !v) return
+let dshControlPollPromise = null
+
+function dshControlButtonsBusy(busy, supported = true) {
   const buttons = [$('btn-dsh-start'), $('btn-dsh-restart')].filter(Boolean)
-  if (v.supported === false) {
-    desc.textContent = v.message || t('settings.dshUnsupported')
-    buttons.forEach(b => { b.disabled = true; b.classList.add('hidden') })
+  buttons.forEach(button => {
+    button.disabled = busy || !supported
+    button.classList.toggle('hidden', !supported)
+  })
+}
+
+function dshControlFailureText(value) {
+  const key = {
+    SERVICE_NOT_FOUND: 'settings.dshErrorServiceNotFound',
+    INVALID_SERVICE: 'settings.dshErrorInvalidService',
+    SYSTEMCTL_NOT_FOUND: 'settings.dshErrorSystemctlNotFound',
+    SYSTEMD_UNAVAILABLE: 'settings.dshErrorSystemdUnavailable',
+    PERMISSION_DENIED: 'settings.dshErrorPermissionDenied',
+    COMMAND_TIMEOUT: 'settings.dshErrorCommandTimeout',
+    COMMAND_FAILED: 'settings.dshErrorCommandFailed',
+    SERVICE_FAILED: 'settings.dshErrorServiceFailed',
+    SERVICE_TIMEOUT: 'settings.dshErrorServiceTimeout',
+    UPSTREAM_TIMEOUT: 'settings.dshErrorUpstreamTimeout',
+    EVENTS_TIMEOUT: 'settings.dshErrorEventsTimeout',
+    OPERATION_NOT_FOUND: 'settings.dshErrorOperationNotFound',
+    OPERATION_IN_PROGRESS: 'settings.dshErrorOperationProgress',
+  }[value?.code]
+  return key
+    ? t(key, { service: value?.service || value?.status?.service || 'dsh-web' })
+    : t('settings.dshErrorGeneric', { msg: value?.error || value?.message || value?.code || t('conn.off') })
+}
+
+function dshControlStageText(operation, step = operation) {
+  const seconds = Math.max(0, Math.round(Number(step?.elapsedMs ?? operation?.elapsedMs ?? 0) / 1000))
+  const action = operation?.action === 'start' ? t('settings.dshStart') : t('settings.dshRestart')
+  const service = operation?.service || operation?.status?.service || 'dsh-web'
+  if (step?.stage === 'queued') return t('settings.dshStageQueued')
+  if (step?.stage === 'checking') return t('settings.dshStageChecking', { service })
+  if (step?.stage === 'command') return t('settings.dshStageCommand', { action })
+  if (step?.stage === 'waiting-service') return t('settings.dshStageWaitingService', { seconds })
+  if (step?.stage === 'waiting-upstream') return t('settings.dshStageWaitingUpstream', { seconds })
+  if (step?.stage === 'waiting-events') return t('settings.dshStageWaitingEvents', { seconds })
+  if (step?.stage === 'complete') {
+    if (operation?.code === 'ALREADY_RUNNING') return t('settings.dshAlreadyRunning', { pid: operation?.status?.mainPid || '—' })
+    return t('settings.dshSuccessDetail', {
+      action,
+      pid: operation?.status?.mainPid || '—',
+      status: operation?.upstream?.status || '—',
+      seconds: Math.max(0, Math.round(Number(operation?.elapsedMs || step?.elapsedMs || 0) / 1000)),
+    })
+  }
+  if (step?.stage === 'failed') return dshControlFailureText(operation)
+  return step?.message || operation?.message || '—'
+}
+
+function renderDshControlOperation(operation) {
+  const desc = $('dsh-control-desc')
+  const box = $('dsh-control-steps')
+  if (!desc || !box || !operation) return
+  const failed = operation.stage === 'failed' || operation.done && operation.ok === false
+  desc.textContent = failed ? t('settings.dshFailed', { msg: dshControlFailureText(operation) }) : dshControlStageText(operation)
+  const steps = Array.isArray(operation.steps) && operation.steps.length
+    ? operation.steps
+    : [{ stage: operation.stage || 'queued', elapsedMs: operation.elapsedMs || 0, message: operation.message || '' }]
+  box.classList.remove('hidden')
+  box.innerHTML = steps.map((step, index) => {
+    const current = !operation.done && index === steps.length - 1
+    const isFailed = step.stage === 'failed'
+    const success = step.stage === 'complete'
+    const mark = isFailed ? '×' : success ? '✓' : current ? '…' : '✓'
+    const cls = isFailed ? 'failed' : success ? 'success' : current ? 'current' : ''
+    const detail = isFailed && operation.detail
+      ? `<span class="dsh-control-step-detail">${esc(t('settings.dshErrorDetail', { detail: operation.detail }))}</span>`
+      : ''
+    return `<div class="dsh-control-step ${cls}"><span class="dsh-control-step-mark" aria-hidden="true">${mark}</span><span>${esc(dshControlStageText(operation, step))}</span>${detail}</div>`
+  }).join('')
+  dshControlButtonsBusy(!operation.done, true)
+}
+
+async function readDshControlResponse(res) {
+  const text = await res.text()
+  if (!text) return {}
+  try { return JSON.parse(text) } catch { return { error: `HTTP ${res.status}`, detail: text.slice(0, 500) } }
+}
+
+async function pollDshControlOperation(operationId, initial) {
+  let value = initial
+  while (true) {
+    renderDshControlOperation(value)
+    if (value.done) return value
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 700))
+    const res = await fetch(adminApiUrl(`/admin/api/dsh?operation=${encodeURIComponent(operationId)}`), {
+      headers: { authorization: 'Bearer ' + state.token }, cache: 'no-store'
+    })
+    if (res.status === 401) { authFailure(); throw Object.assign(new Error('unauthorized'), { auth: true }) }
+    const next = await readDshControlResponse(res)
+    if (!res.ok) throw Object.assign(new Error(next.error || next.message || `HTTP ${res.status}`), { dshPayload: { ...next, httpStatus: res.status } })
+    value = next
+  }
+}
+
+function renderDshControlStatus(value) {
+  const desc = $('dsh-control-desc')
+  const box = $('dsh-control-steps')
+  if (!desc || !value) return
+  if (value.supported === false) {
+    desc.textContent = value.code ? dshControlFailureText(value) : value.message || t('settings.dshUnsupported')
+    dshControlButtonsBusy(false, false)
     return
   }
-  buttons.forEach(b => { b.disabled = false; b.classList.remove('hidden') })
-  desc.textContent = `${t(v.running ? 'settings.dshRunning' : 'settings.dshStopped')} · ${v.service || 'dsh-web'}`
+  if (value.ok === false) {
+    desc.textContent = t('settings.dshStatusFailed', { msg: dshControlFailureText(value) })
+    dshControlButtonsBusy(false, false)
+    return
+  }
+  dshControlButtonsBusy(false, true)
+  if (box && !dshControlPollPromise) box.classList.add('hidden')
+  const service = value.service || 'dsh-web'
+  const serviceState = `${value.activeState || value.state || 'unknown'}/${value.subState || 'unknown'}`
+  desc.textContent = value.running
+    ? t('settings.dshRunningDetail', { service, pid: value.mainPid || '—', state: serviceState })
+    : t('settings.dshStoppedDetail', { service, state: serviceState })
 }
 
 async function loadDshControl() {
   if (!state.token || !$('dsh-control-desc')) return
   try {
-    const res = await fetch(adminApiUrl('/admin/api/dsh'), { headers: { authorization: 'Bearer ' + state.token } })
+    const res = await fetch(adminApiUrl('/admin/api/dsh'), { headers: { authorization: 'Bearer ' + state.token }, cache: 'no-store' })
     if (res.status === 401) return authFailure()
-    renderDshControlStatus(await res.json())
-  } catch {
-    $('dsh-control-desc').textContent = t('settings.dshFailed', { msg: t('conn.off') })
+    const value = await readDshControlResponse(res)
+    if (!res.ok) throw Object.assign(new Error(value.error || value.message || `HTTP ${res.status}`), { dshPayload: value })
+    renderDshControlStatus(value)
+    if (value.operation?.operationId && !value.operation.done && !dshControlPollPromise) {
+      dshControlPollPromise = pollDshControlOperation(value.operation.operationId, value.operation)
+        .then(renderDshControlOperation)
+        .catch(error => {
+          if (!error?.auth) $('dsh-control-desc').textContent = t('settings.dshFailed', { msg: error?.dshPayload ? dshControlFailureText(error.dshPayload) : t('settings.dshResultUnknown') })
+        })
+        .finally(() => { dshControlPollPromise = null; dshControlButtonsBusy(false, true) })
+    }
+  } catch (error) {
+    $('dsh-control-desc').textContent = t('settings.dshStatusFailed', { msg: error?.dshPayload ? dshControlFailureText(error.dshPayload) : t('conn.off') })
   }
 }
 
 async function controlDsh(action) {
+  if (dshControlPollPromise) return
   const label = action === 'start' ? t('settings.dshStart') : t('settings.dshRestart')
-  const buttons = [$('btn-dsh-start'), $('btn-dsh-restart')].filter(Boolean)
-  buttons.forEach(b => { b.disabled = true })
-  const desc = $('dsh-control-desc')
-  if (desc) desc.textContent = t('settings.dshStarting', { action: label })
+  dshControlButtonsBusy(true, true)
+  renderDshControlOperation({ action, service: 'dsh-web', accepted: true, done: false, stage: 'queued', elapsedMs: 0, steps: [] })
   try {
     const res = await fetch(adminApiUrl('/admin/api/dsh'), {
       method: 'POST',
@@ -4336,15 +3933,33 @@ async function controlDsh(action) {
       body: JSON.stringify({ action }),
     })
     if (res.status === 401) return authFailure()
-    const v = await res.json().catch(() => ({}))
-    if (!res.ok || v.ok === false) throw new Error(v.error || v.message || `HTTP ${res.status}`)
+    let v = await readDshControlResponse(res)
+    if (res.status === 409 && v.operation?.operationId) v = v.operation
+    else if (!res.ok) throw Object.assign(new Error(v.error || v.message || `HTTP ${res.status}`), { dshPayload: { ...v, httpStatus: res.status } })
+
+    if (v.accepted && v.operationId) {
+      dshControlPollPromise = pollDshControlOperation(v.operationId, v)
+      v = await dshControlPollPromise
+      if (!v.ok) throw Object.assign(new Error(dshControlFailureText(v)), { dshPayload: v })
+      renderDshControlOperation(v)
+      toast(dshControlStageText(v), 'ok')
+      return
+    }
+
+    // 兼容旧网关：它会在单个 POST 中直接返回最终状态。
+    if (v.ok === false) throw Object.assign(new Error(v.error || v.message || `HTTP ${res.status}`), { dshPayload: v })
     renderDshControlStatus(v)
     toast(t('settings.dshStarted', { action: label }), 'ok')
-  } catch (e) {
-    if (desc) desc.textContent = t('settings.dshFailed', { msg: e?.message || e })
-    toast(t('settings.dshFailed', { msg: e?.message || e }), 'err')
+  } catch (error) {
+    if (error?.auth) return
+    const payload = error?.dshPayload
+    const message = payload ? dshControlFailureText(payload) : t('settings.dshResultUnknown')
+    if (payload) renderDshControlOperation({ action, service: payload.service || 'dsh-web', done: true, ok: false, stage: 'failed', steps: payload.steps || [], ...payload })
+    else $('dsh-control-desc').textContent = t('settings.dshFailed', { msg: message })
+    toast(t('settings.dshFailed', { msg: message }), 'err')
   } finally {
-    buttons.forEach(b => { b.disabled = false })
+    dshControlPollPromise = null
+    dshControlButtonsBusy(false, true)
   }
 }
 
@@ -4491,7 +4106,11 @@ function bindUi() {
   $('btn-back').addEventListener('click', closeSession)
   $('btn-stats').addEventListener('click', () => { renderSessionCards(); $('modal-stats').classList.remove('hidden') })
   $('stats-close').addEventListener('click', () => $('modal-stats').classList.add('hidden'))
-  $('btn-refresh').addEventListener('click', () => { toast(t('common.refreshing')); openStreams(); refreshAll() })
+  $('btn-refresh').addEventListener('click', () => {
+    toast(t('common.refreshing'))
+    openStreams()
+    void Promise.all([refreshAll(), checkAnnouncements()])
+  })
   // 反馈
   $('btn-feedback').addEventListener('click', (e) => { e.stopPropagation(); toggleFeedbackSheet() })
   $('feedback-backdrop').addEventListener('click', closeFeedbackSheet)
@@ -4510,7 +4129,6 @@ function bindUi() {
     if (e.key === 'Escape' && !$('feedback-sheet').classList.contains('hidden')) { closeFeedbackSheet(); $('btn-feedback').focus() }
   })
   $('btn-new-session').addEventListener('click', newSession)
-  $('btn-new-workspace').addEventListener('click', openWorkspaceModal)
   $('session-sort')?.addEventListener('change', (e) => {
     state.sessionSort = e.target.value === 'workspace' ? 'workspace' : 'time'
     LS.set('sessionSort', state.sessionSort)
@@ -4604,10 +4222,6 @@ function bindUi() {
   // goal
   $('goal-close').addEventListener('click', () => $('modal-goal').classList.add('hidden'))
   $('goal-edit').addEventListener('click', submitGoalEdit)
-  $('workspace-cancel').addEventListener('click', closeWorkspaceModal)
-  $('workspace-create').addEventListener('click', createWorkspace)
-  $('workspace-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') createWorkspace() })
-  $('modal-workspace').addEventListener('click', (e) => { if (e.target === $('modal-workspace')) closeWorkspaceModal() })
   $('archive-cancel').addEventListener('click', closeArchiveConfirm)
   $('archive-confirm').addEventListener('click', confirmArchiveSession)
   $('modal-archive').addEventListener('click', (e) => { if (e.target === $('modal-archive')) closeArchiveConfirm() })
@@ -4628,6 +4242,13 @@ function bindUi() {
     const btn = e.target.closest('[data-announcement-poll]')
     if (!btn) return
     const item = readAnnouncementHistory().find(entry => entry.id === btn.dataset.announcementPoll)
+    if (item) openAnnouncementModal(item)
+  })
+  $('overview-announcement-history')?.addEventListener('click', openAnnouncementHistory)
+  $('overview-announcement-list')?.addEventListener('click', (e) => {
+    const button = e.target.closest('[data-home-announcement]')
+    if (!button) return
+    const item = announcementBoardItems().find(entry => entry.id === button.dataset.homeAnnouncement)
     if (item) openAnnouncementModal(item)
   })
   // 设置
@@ -4771,31 +4392,6 @@ function bindUi() {
   $('btn-transcribe-test-convert')?.addEventListener('click', runTranscribeTest)
   $('btn-fs-transcribe')?.addEventListener('click', composerTranscribe)
 
-  // 文件页
-  $('fs-up').addEventListener('click', fsUp)
-  $('fs-new-workspace').addEventListener('click', openWorkspaceModal)
-  $('fs-refresh').addEventListener('click', () => { toast(t('common.refreshing')); loadFs() })
-  $('fs-upload-btn').addEventListener('click', () => $('fs-file-input').click())
-  $('fs-file-input').addEventListener('change', (e) => {
-    const f = e.target.files?.[0]
-    if (f) uploadFsFile(f)
-    e.target.value = '' // 允许连续选同一个文件
-  })
-  $('fs-pause-btn').addEventListener('click', pauseFsUpload)
-  $('fs-cancel-btn').addEventListener('click', cancelFsUpload)
-  bindFsPullRefresh()
-
-  // 文件预览弹窗
-  $('file-preview-close')?.addEventListener('click', closeFsPreview)
-  $('file-preview-done')?.addEventListener('click', closeFsPreview)
-  $('modal-file-preview')?.addEventListener('click', (e) => { if (e.target === $('modal-file-preview')) closeFsPreview() })
-  $('file-preview-source-tab')?.addEventListener('click', () => showFsPreviewMode('source'))
-  $('file-preview-rendered-tab')?.addEventListener('click', () => showFsPreviewMode('rendered'))
-  $('file-preview-download')?.addEventListener('click', () => {
-    const preview = state.fs.preview
-    if (preview?.path) downloadFsPath(preview.path, preview.name)
-  })
-
   bindRail()
 
   // 向上翻历史 / 向下回最新
@@ -4835,6 +4431,7 @@ function applyNativeInsets() {
 async function boot() {
   initToken()
   bindUi()
+  renderAnnouncementBoard()
   renderLangBtn()
   bindNativeBack()
   bindNativeLinks()
@@ -4854,7 +4451,9 @@ async function boot() {
     if (host) { state.hostInfo = host; $('host-desc').textContent = t('settings.hostDesc', { version: host.version, cwd: host.cwd, n: host.attachedSessions }) }
     loadDshControl()
   }
-  // 公告与更新共用当前服务器；公告优先，避免启动时两个弹窗重叠。
+  // 公告来自网关(本地文件或可选的中央源), 前台每 30 秒检查, 回到前台/网络恢复立即补查;
+  // 公告优先，避免启动时两个弹窗重叠。
+  startAnnouncementPolling()
   setTimeout(async () => {
     const shown = await checkAnnouncements()
     if (!shown && state.token) checkUpdate(true)

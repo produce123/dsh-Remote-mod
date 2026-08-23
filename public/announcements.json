@@ -1,36 +1,28 @@
 {
   "items": [
     {
-      "id": "2026-08-21-community-test",
-      "title": "dsh-Remote 测试公告",
-      "content": "这是一条测试公告，如果您已经更新了新版的 dsh-Remote，您将收到这份公告。之后一些内容将会以实时公告的形式发布。\n\n非常遗憾的是，之前在 App 内直接反馈的内容由于当时服务器接收端配置问题，导致没有留下记录。如果您对 dsh-Remote 的后续更新与维护有更好的建议或者反馈，可以通过标题栏中的反馈渠道联系我，我会对反馈内容进行评估后对插件功能进行改善，感谢各位开发者的支持。",
-      "minVersion": "0.6.7",
+      "id": "mod-project-statement",
+      "title": "关于本项目：个人魔改版，请认准原作者",
+      "content": "大家好，本仓库（produce123/dsh-Remote-mod）是基于原作者 Blank（GitHub: Blank-not-black/dsh-Remote）的 DSH Remote 项目深度魔改的个人分支，仅作为个人使用，同时公开出来供有同样需求的开发者参考使用。\n\n请务必认准原作者与原版项目：DSH Remote 的全部核心能力（网关、Android App、WebUI、工作台等）都来自原作者 Blank 的开源工作，本分支只是在原版基础上的个人定制，不构成独立项目。原版仓库地址：https://github.com/Blank-not-black/dsh-Remote ，请优先支持原作者。\n\n本分支与上游的主要差异：① 插件以独立包名 dsh-remote-mod-plugin 交付，与原版互不冲突；② 移除了文件传输功能（推荐用 Syncthing 等开源工具）；③ 反馈渠道为维护者自有（GitHub Issues / B 站 / 邮箱）；④ 公告与投票数据只走你自己的网关，不依赖任何第三方服务器。",
+      "minVersion": "",
       "maxVersion": "",
-      "publishedAt": "2026-08-21T15:00:00+08:00"
+      "publishedAt": "2026-08-23T21:00:00+08:00"
     },
     {
-      "id": "2026-08-22-0.6.9-progress",
-      "title": "dsh-Remote 0.6.9 更新公告",
-      "content": "各位开发者们下午好呀！在昨天的开发中，我对dsh-Remote的UI和网关部分进行了整体重构，目前的UI相比以往会更加简洁一些，同时网络连接稳定性也得到了增强，同时也吸取了PR中的部分功能，不知道大家使用后感觉体验如何呢？\n\n现在deepseek出了官方多模态模型，dsh的新版本也可以识别图片啦，所以我为app添加了插入图片附件的功能，以便更好地适配新版本。\n\n如果关于插件开发有更多的想法与建议，亦或是遇到了一些bug都可以通过各种渠道进行反馈，不过如果是在github上的话，由于目前版本更新较为频繁，更推荐各位开发者们提交issues进行反馈，提交PR可能由于版本不是最新还需要手动移植。感谢大家的支持与反馈！\n\n（设置中已新增往期公告功能，各位开发者可以查阅往期公告啦！）",
-      "minVersion": "0.6.9",
+      "id": "2026-08-23-v0.7.4-mod",
+      "title": "v0.7.4-mod：移除文件传输 + 整合上游 v0.6.12",
+      "content": "本次 mod 更新做了以下调整：\n\n1. 移除文件传输功能：手机端「文件」页、上传/下载/预览、以及服务器端 /fs/* 接口全部移除（会话页的拍照/图片附件不受影响）。如需在手机和电脑间同步文件，推荐开源项目 Syncthing（https://github.com/syncthing/syncthing）；\n2. 保留并改造工作台：工作台项目改为直接读取 DSH 已登记的工作区，不再扫描服务器磁盘；桌面端绑定工作台改为从工作区列表选择；\n3. 整合上游 v0.6.12：远程启动/重启 DSH 改为异步追踪（成功显示 PID/HTTP 状态/用时，失败细分原因）；主页新增常驻公告栏与 30 秒轮询；网关支持可选中央公告源（DSH_REMOTE_ANNOUNCEMENTS_URL，默认仍为纯本地）；\n4. 公告系统重写：现在你能看到的公告即本分支的版本说明，始终认准原作者与原版项目。\n\n欢迎大家投票选出下个版本最想看到的方向，或通过反馈渠道（GitHub Issues / B 站 / 邮箱）直接告诉我。感谢支持！",
+      "minVersion": "0.7.4-mod",
       "maxVersion": "",
-      "publishedAt": "2026-08-22T12:00:00+08:00"
-    },
-    {
-      "id": "2026-08-23-v0.7.3-mod",
-      "title": "v0.7.3-mod：投票公告、文件预览与周末谷时上线",
-      "content": "本次 mod 更新整合了上游 v0.6.11 的几项实用功能，并做了适配改造：\n\n1. 投票公告：公告里可以附带投票，投出的票会记录在你自己的网关（~/.dsh-remote/poll-votes.jsonl），不会发给任何第三方，你可以在服务器上用 scripts/summarize-polls.mjs 汇总结果；\n2. 文件预览：手机端文件页直接点开文本/代码/Markdown 文件即可预览（≤1MB），Markdown 还能切换渲染视图；\n3. 周末全天谷时：统计计费与 App 峰谷提醒同步改为周末不计高峰价（周末只在 9:00 提醒一次），并自动清理旧版重复的本地提醒；\n4. 插件图标跟随 DSH 主题自适应（深浅色）。\n\n欢迎大家投票选出下个版本最想看到的功能，或通过反馈渠道（GitHub Issues / B站 / 邮箱）直接告诉我。感谢支持！",
-      "minVersion": "0.7.3-mod",
-      "maxVersion": "",
-      "publishedAt": "2026-08-23T20:00:00+08:00",
+      "publishedAt": "2026-08-23T21:10:00+08:00",
       "poll": {
-        "id": "v0.7.3-priority",
+        "id": "v0.7.4-priority",
         "question": "下个版本你最期待哪个方向？",
         "options": [
           { "id": "transcribe", "label": "转写能力增强", "description": "更多模型/格式支持、转写历史记录" },
-          { "id": "files", "label": "文件管理增强", "description": "重命名/删除/移动、压缩包预览" },
           { "id": "desktop", "label": "桌面端体验", "description": "与手机端对齐更多能力" },
-          { "id": "stability", "label": "稳定性与兼容性", "description": "连接可靠性、更多 ROM 通知适配" }
+          { "id": "stability", "label": "稳定性与兼容性", "description": "连接可靠性、更多 ROM 通知适配" },
+          { "id": "other", "label": "其他", "description": "你有别的想法，欢迎直接反馈" }
         ]
       }
     }

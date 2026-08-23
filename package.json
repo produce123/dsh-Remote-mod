@@ -1,6 +1,6 @@
 {
   "name": "dsh-remote",
-  "version": "0.7.3-mod",
+  "version": "0.7.4-mod",
   "private": true,
   "dsh": {
     "bundle": {
@@ -15,7 +15,7 @@
     }
   },
   "description": "DSH 移动远程控制台: DSH 插件(内置网关自启停) + 独立网关 + Android App 一体",
-  "updateNotes": "0.7.3-mod：整合上游 v0.6.11 —— ① 投票公告：公告可附带投票，票记录在本机网关 ~/.dsh-remote/poll-votes.jsonl（不依赖第三方收集器），可用 scripts/summarize-polls.mjs 汇总；② 文件预览：文件页直接点开文本/代码/Markdown（≤1MB）预览，Markdown 支持源码/渲染切换；③ 周末全天谷时：统计计费与 App 峰谷提醒改为周末不计高峰价（周末仅 9:00 提醒一次），并自动清理旧版重复的本地提醒；④ 插件侧边栏图标随 DSH 主题自适应；⑤ README 同步更新。",
+  "updateNotes": "0.7.4-mod：① 移除文件传输功能（手机端文件页、上传/下载/预览、网关 /fs/* 全部移除，会话页拍照/图片附件不受影响），如需文件同步推荐 Syncthing（https://github.com/syncthing/syncthing）；② 工作台保留并改造：项目直接读取 DSH 已登记工作区、不再扫描磁盘，桌面端绑定改为从工作区列表选择；③ 整合上游 v0.6.12：远程启动/重启 DSH 改为异步追踪（成功显示 PID/HTTP 状态/用时，失败细分原因并显示步骤），主页新增常驻公告栏（30 秒轮询 + 回到前台/联网补查），网关支持可选中央公告源 DSH_REMOTE_ANNOUNCEMENTS_URL（默认纯本地，不指向任何第三方）；④ 公告系统重写：明确本分支为基于原作者 Blank 的 dsh-Remote 的个人魔改版，请认准原作者与原版项目。",
   "bin": "gateway.js",
   "pkg": {
     "assets": [
