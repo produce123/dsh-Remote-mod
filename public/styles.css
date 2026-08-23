@@ -776,13 +776,7 @@ button.overview-attention-item, button.overview-session-item { cursor:pointer; }
 @keyframes sheet-fade { from { opacity: 0 } to { opacity: 1 } }
 @keyframes sheet-up { from { transform: translateY(24px); opacity: .6 } to { transform: translateY(0); opacity: 1 } }
 
-/* 写反馈弹层 */
-.fb-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-.fb-chip {
-  min-height: 36px; padding: 7px 14px; border-radius: 999px; font-size: 13px;
-  background: var(--dsr-panel); border: 1px solid var(--dsr-line); color: var(--dsr-text); cursor: pointer;
-}
-.fb-chip.current { background: var(--dsr-accent-soft); border-color: var(--dsr-accent-line); color: var(--dsr-accent-strong); font-weight: 600; }
+/* 表单输入(工作区命名等) */
 .fb-textarea, .fb-input {
   width: 100%; box-sizing: border-box; margin-bottom: 10px;
   background: var(--dsr-panel); color: var(--dsr-text); border: 1px solid var(--dsr-line); border-radius: 12px;

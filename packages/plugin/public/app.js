@@ -133,29 +133,6 @@ function closeFeedbackSheet() {
 function toggleFeedbackSheet() {
   $('feedback-sheet').classList.contains('hidden') ? openFeedbackSheet() : closeFeedbackSheet()
 }
-function openFeedbackModal() {
-  state.feedbackType = 'bug'
-  document.querySelectorAll('#fb-chips .fb-chip').forEach(b => b.classList.toggle('current', b.dataset.fbType === 'bug'))
-  $('fb-msg').value = ''
-  $('fb-contact').value = ''
-  $('modal-feedback').classList.remove('hidden')
-  setTimeout(() => $('fb-msg').focus(), 50)
-}
-function closeFeedbackModal() { $('modal-feedback').classList.add('hidden') }
-async function submitFeedback() {
-  const type = state.feedbackType || 'bug'
-  const message = $('fb-msg').value.trim()
-  const contact = $('fb-contact').value.trim()
-  if (!message) { toast(t('feedback.empty'), 'err'); return }
-  if (message.length > 2000) { toast(t('feedback.tooLong'), 'err'); return }
-  // mod fork: 反馈直接唤起邮件客户端发往维护者邮箱, 不再经网关转发第三方收集器。
-  const subject = encodeURIComponent('[DSH Remote 反馈] ' + type)
-  const body = encodeURIComponent(message + (contact ? '\n\n联系方式：' + contact : ''))
-  location.href = 'mailto:p2128887242@outlook.com?subject=' + subject + '&body=' + body
-  closeFeedbackModal()
-  toast(t('feedback.mailOpen'), 'ok')
-}
-
 function fmtTime(ts) {
   if (!ts) return ''
   const diff = Date.now() - ts
@@ -4320,14 +4297,6 @@ function bindUi() {
     toast(t(ok ? 'feedback.copied' : 'feedback.copyFailed'), ok ? 'ok' : 'err')
     closeFeedbackSheet()
   })
-  $('btn-write-feedback').addEventListener('click', () => { closeFeedbackSheet(); openFeedbackModal() })
-  $('fb-cancel').addEventListener('click', closeFeedbackModal)
-  $('fb-submit').addEventListener('click', submitFeedback)
-  document.querySelectorAll('#fb-chips .fb-chip').forEach(btn =>
-    btn.addEventListener('click', () => {
-      state.feedbackType = btn.dataset.fbType
-      document.querySelectorAll('#fb-chips .fb-chip').forEach(b => b.classList.toggle('current', b === btn))
-    }))
   document.addEventListener('click', (e) => {
     if (!e.target.closest('#feedback-sheet') && !e.target.closest('#btn-feedback')) closeFeedbackSheet()
   })

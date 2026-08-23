@@ -1,7 +1,7 @@
 {
   "name": "dsh-remote-mod-plugin",
-  "version": "0.7.1-mod",
-  "description": "DSH Remote mod 分支修复版 bundle 插件（独立于上游 dsh-remote-plugin）：DSH 左侧原生边栏入口 + 右侧抽屉内嵌管理控制台；内置网关随 DSH 自动启停(systemd 独立单元)，抽屉直显令牌与设备监控；网关提供 /fs/* 文件传输端点(列表/断点下载/上传)，配合 Android App 远程操控会话/审批/提问/goal 与文件互传(多服务器测速切换、聊天记录离线缓存)。",
+  "version": "0.7.2-mod",
+  "description": "DSH Remote 的 mod 分支 bundle 插件（独立于上游 dsh-remote-plugin）：相对上游新增 prompt 转写（OpenAI 兼容 API 经网关代理，自带连接/功能测试与流式输出）、修复桌面归档开关与连接测试跨域预检等多项问题、反馈渠道改为维护者自有（GitHub/B站/邮箱）且移除 App 内直接提交入口。功能：DSH 左侧原生边栏入口 + 右侧抽屉内嵌管理控制台；内置网关随 DSH 自动启停(systemd 独立单元)，抽屉直显令牌与设备监控；网关提供 /fs/* 文件传输端点(列表/断点下载/上传)，配合 Android App 远程操控会话/审批/提问/goal 与文件互传(多服务器测速切换、聊天记录离线缓存)。",
   "type": "module",
   "main": "./index.mjs",
   "exports": {

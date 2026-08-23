@@ -1,18 +1,27 @@
 # dsh-remote-mod-plugin
 
-The mod-branch fixed bundle plugin for DSH Remote (independent of the upstream `dsh-remote-plugin`). It adds a DSH sidebar entry, a compact status panel, a full admin console, and a gateway managed alongside DSH.
+DSH Remote **mod-branch** bundle plugin (independent package name — never conflicts with the upstream `dsh-remote-plugin`; registered as `dsh-remote-mod`). It adds a DSH sidebar entry, a compact status panel, a full admin console, and a gateway managed alongside DSH.
 
 [English](README.en.md) · [中文](README.md)
+
+## Differences from the upstream dsh-remote-plugin
+
+- **Transcribe connection failures fixed**: the gateway `/transcribe` route now answers CORS preflight requests, so "connection test / transcribe" no longer misreports "network error — check your network or API address" in the app / cross-origin environments;
+- **Transcribe proxied through the gateway with streaming output**: OpenAI-compatible API calls are forwarded by the gateway (avoids the mobile WebView CORS limit), rendered word by word, with connection/function tests and idle/total timeout protection;
+- **Feedback localized**: the in-app "write feedback / submit from the app" entry is removed; feedback goes through GitHub Issues / Bilibili / email; sponsor features removed;
+- **Upstream 0.6.10 stability fixes integrated** (event channel auto-reconnect, replies after an image-inflated history stay in view, no duplicate subagents on concurrent session-card requests) plus UX fixes (desktop archive toggle, unified admin entry, collapapped 401 toasts with token renewal).
+
+Per-version details: [GitHub Releases](https://github.com/produce123/dsh-Remote-mod/releases).
 
 ## Install
 
 ```sh
+# From npm (recommended)
 dsh plugin --profile web add dsh-remote-mod-plugin
 
-# Optional version pin (requires npm publish rights; this fork ships a tgz in Releases)
-dsh plugin --profile web add dsh-remote-mod-plugin@0.7.0-mod
-# or from a local tarball:
-# dsh plugin --profile web add /abs/path/dsh-remote-mod-plugin-0.7.0-mod.tgz
+# Pin a version, or install the tgz shipped in Releases by local path
+dsh plugin --profile web add dsh-remote-mod-plugin@0.7.2-mod
+# dsh plugin --profile web add /abs/path/dsh-remote-mod-plugin-0.7.2-mod.tgz
 ```
 
 Restart DSH Web and refresh the browser. The DSH Remote entry will appear in the sidebar.

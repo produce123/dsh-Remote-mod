@@ -2237,6 +2237,13 @@ const TRANSCRIBE_PROXY_TIMEOUT_MS = 120000
 
 function serveTranscribe(req, res, url) {
   cors(res)
+  // 跨域预检: App/Capacitor(http://localhost)与 DSH 插件页等跨源环境必须先发 OPTIONS,
+  // 不应答 204 会被浏览器当作预检失败拦截发请求, 表现为"网络错误,请检查网络或API地址"。
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204)
+    res.end()
+    return
+  }
   if (req.method !== 'POST') {
     res.writeHead(405, { 'content-type': 'application/json; charset=utf-8' })
     res.end(JSON.stringify({ error: 'method not allowed' }))

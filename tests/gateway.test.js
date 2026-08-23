@@ -1132,6 +1132,20 @@ test('转写代理：鉴权、配置校验、test 模式与 SSE 流式透传', a
     let res = await fetch(tbase + '/transcribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload({})) })
     assert.equal(res.status, 401)
 
+    // CORS 预检: App(Capacitor http://localhost)等跨源环境 POST 前先发 OPTIONS,
+    // 必须 204 放行, 否则浏览器拦截请求(用户侧"网络错误,请检查网络或API地址")
+    res = await fetch(tbase + '/transcribe', {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'http://localhost:8080',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'authorization, content-type',
+      }
+    })
+    assert.equal(res.status, 204)
+    assert.match(res.headers.get('access-control-allow-origin') || '', /localhost/)
+    assert.match(res.headers.get('access-control-allow-headers') || '', /authorization/)
+
     // base 非 http(s) → 400
     res = await fetch(tbase + '/transcribe', { method: 'POST', headers: hdrs, body: JSON.stringify(payload({ base: 'file:///etc/passwd' })) })
     assert.equal(res.status, 400)
