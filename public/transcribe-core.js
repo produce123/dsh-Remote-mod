@@ -29,6 +29,7 @@
 
   /* OpenAI 兼容接口 HTTP 状态码 → 用户可读失败原因(中文) */
   function statusMessage(status) {
+    if (status === 400) return '请求参数错误：请检查 API 地址、模型名或输入内容（400）'
     if (status === 401 || status === 403) return '认证失败：API 密钥无效或无权限（' + status + '）'
     if (status === 404) return '接口不存在：请检查 API 地址是否以 /v1 结尾（' + status + '）'
     if (status === 429) return '请求过于频繁或额度不足（' + status + '）'
@@ -36,5 +37,25 @@
     return '请求失败（HTTP ' + status + '）'
   }
 
-  return { TRANSCRIBE_SYSTEM_PROMPT, maskApiKey, statusMessage }
+  /* 解析一条 SSE "data:" 行的增量输出。
+   * 返回 { type: 'delta', text } / { type: 'done' } / { type: 'error', error } / { type: 'skip' }。
+   * 兼容 OpenAI 兼容接口流式响应(choices[].delta.content)与 [DONE] 结束符;
+   * 忽略 usage/finish_reason 等无内容帧; 非 JSON 行按 skip 处理不强杀。
+   * app.js 流式读取循环与单元测试共用。 */
+  function parseSseData(line) {
+    const data = String(line).trim().replace(/^data:\s*/, '').trim()
+    if (data === '[DONE]') return { type: 'done' }
+    let obj
+    try { obj = JSON.parse(data) } catch { return { type: 'skip' } }
+    if (obj.error) {
+      const code = typeof obj.error.code === 'number' ? obj.error.code : 0
+      const text = obj.error.message || statusMessage(code)
+      return { type: 'error', error: String(text) }
+    }
+    const piece = obj.choices && obj.choices[0] && obj.choices[0].delta && obj.choices[0].delta.content
+    if (typeof piece === 'string') return { type: 'delta', text: piece }
+    return { type: 'skip' }
+  }
+
+  return { TRANSCRIBE_SYSTEM_PROMPT, maskApiKey, statusMessage, parseSseData }
 })

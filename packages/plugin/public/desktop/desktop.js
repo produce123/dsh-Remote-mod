@@ -474,24 +474,12 @@ async function submitFeedback() {
   const contact = $('fb-contact').value.trim()
   if (!message) { toast(t('ds.feedbackEmpty'), 'err'); return }
   if (message.length > 2000) { toast(t('ds.feedbackTooLong'), 'err'); return }
-  const btn = $('fb-submit')
-  btn.disabled = true
-  try {
-    const res = await fetch(apiUrl('/feedback'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + state.token },
-      body: JSON.stringify({ type, message, contact, appVersion: '' })
-    })
-    let json = {}
-    try { json = await res.json() } catch {}
-    if (res.ok && json.ok) { toast(t('ds.feedbackSubmitted'), 'ok'); closeFeedbackModal() }
-    else if (res.status === 429) { toast(t('ds.feedbackRateLimited'), 'err') }
-    else { toast(t('ds.feedbackSubmitFailed', { msg: json.error || res.status }), 'err') }
-  } catch {
-    toast(t('ds.feedbackSubmitFailed', { msg: t('ds.feedbackNetworkError') }), 'err')
-  } finally {
-    btn.disabled = false
-  }
+  // mod fork: 反馈直接唤起邮件客户端发往维护者邮箱, 不再经网关转发第三方收集器。
+  const subject = encodeURIComponent('[DSH Remote 反馈] ' + type)
+  const body = encodeURIComponent(message + (contact ? '\n\n联系方式：' + contact : ''))
+  location.href = 'mailto:p2128887242@outlook.com?subject=' + subject + '&body=' + body
+  closeFeedbackModal()
+  toast(t('ds.feedbackMailOpen'), 'ok')
 }
 function showTip(text, anchorRect) {
   const tip = $('ds-tip')
@@ -1444,9 +1432,12 @@ function renderHistory() {
 }
 
 /* ---------------- 会话信息卡（goal / todo / 子代理） ---------------- */
+let sessionCardsRenderGeneration = 0
 async function renderSessionCards() {
+  const renderGeneration = ++sessionCardsRenderGeneration
+  const sessionId = state.current
   const box = $('session-cards')
-  const s = state.byId.get(state.current)
+  const s = state.byId.get(sessionId)
   if (!box) return
   if (!s) { box.innerHTML = ''; return }
   const goal = goalOf(s)
@@ -1472,7 +1463,8 @@ async function renderSessionCards() {
   box.querySelectorAll('[data-goal]').forEach(btn =>
     btn.addEventListener('click', () => goalAction(btn.dataset.goal)))
 
-  const sub = await safeRpc('subagent.list', { parentSessionId: state.current }, '')
+  const sub = await safeRpc('subagent.list', { parentSessionId: sessionId }, '')
+  if (renderGeneration !== sessionCardsRenderGeneration || state.current !== sessionId) return
   if (sub?.entries?.length) {
     const rows = sub.entries.map(e => {
       if (e.kind === 'diagnostic') return `<div class="ds-card-row"><span class="ds-card-k">${t('subagent.diagnostic')}</span><span class="ds-card-v">${esc(e.reason)}</span></div>`
@@ -2221,6 +2213,8 @@ function showSettingsPage(name) {
 }
 function updateConn() {
   const el = $('conn-badge')
+  // 双实时通道可能按任意顺序打开，连接刷新必须同时刷新系统总览。
+  renderOverviewDesktop()
   const cur = state.servers.find(s => s.url === state.server)
   const group = cur ? cur.group : state.activeGroup
   const label = cur ? (cur.note || cur.url) : (state.server || t('ds.origin'))

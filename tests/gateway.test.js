@@ -133,7 +133,7 @@ function attachWsAutoPong(socket, outgoingMasked) {
   })
 }
 
-function startFakeUpstream() {
+function startFakeUpstream(listenPort = 0) {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
       res.writeHead(404)
@@ -164,7 +164,7 @@ function startFakeUpstream() {
         socket.write(encodeWsText(JSON.stringify(HOST_EVENT)))
       }
     })
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(listenPort, '127.0.0.1', () => {
       fakeUpstreamPort = server.address().port
       fakeUpstream = server
       resolve(server)
@@ -197,6 +197,22 @@ async function waitForHealth(url, timeoutMs = 10000) {
   throw new Error('gateway did not become healthy: ' + (lastErr?.message || lastErr))
 }
 
+async function waitForCollectors(predicate, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs
+  let last
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(500) })
+      if (res.ok) {
+        last = await res.json()
+        if (predicate(last.events)) return last
+      }
+    } catch {}
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  throw new Error('collector state did not converge: ' + JSON.stringify(last))
+}
+
 async function stopChild() {
   if (!child) return
   if (child.exitCode === null) {
@@ -220,6 +236,12 @@ before(async () => {
   port = await getFreePort()
   base = `http://127.0.0.1:${port}`
 
+  startChild()
+
+  await waitForHealth(base)
+})
+
+function startChild() {
   child = spawn(process.execPath, [GATEWAY], {
     cwd: ROOT,
     env: {
@@ -234,6 +256,7 @@ before(async () => {
       DSH_REMOTE_FS_ROOT: [tmpRoot, secondaryRoot].join(path.delimiter),
       DSH_REMOTE_NOTES: path.join(tmpRoot, 'notes.json'),
       DSH_REMOTE_DSH_SERVICE: 'invalid service',
+      GATEWAY_WS_UPGRADE_TIMEOUT_MS: '1000',
       UPDATE_CHECK_URL: 'http://127.0.0.1:1/update',
       UPDATE_INTERVAL_MS: '3600000',
       // 清空代理，保证更新检查即使被触发也只连本机不可达端口
@@ -247,9 +270,7 @@ before(async () => {
   })
   child.stdout.on('data', () => {})
   child.stderr.on('data', () => {})
-
-  await waitForHealth(base)
-})
+}
 
 after(async () => {
   await stopChild()
@@ -821,6 +842,27 @@ test('事件轮询：upstream 不可达时接口仍可用（纯内存读）', as
   assert.ok(Array.isArray(body.events))
 })
 
+test('事件采集：启动时 upstream 不可达，恢复后自动重连', async () => {
+  const unavailablePort = fakeUpstreamPort
+  await stopChild()
+  await stopFakeUpstream()
+  startChild()
+  await waitForHealth(base)
+
+  const failed = await waitForCollectors((events) =>
+    events.mux.lastError || events.host.lastError
+  )
+  assert.equal(failed.events.mux.connected, false)
+  assert.equal(failed.events.host.connected, false)
+
+  await startFakeUpstream(unavailablePort)
+  const recovered = await waitForCollectors((events) =>
+    events.mux.connected && events.host.connected
+  )
+  assert.ok(recovered.events.mux.reconnects >= 1)
+  assert.ok(recovered.events.host.reconnects >= 1)
+})
+
 // 说明：版本比较函数 cmpVersion/parseVersion 位于 public/app.js（浏览器端），
 // 不在 gateway.js 进程内；按任务约束不为它引入 vm/DOM 模拟，因此这里只覆盖
 // 网关侧的 /update.json 版本兼容输出（rc 后缀剥离逻辑）。
@@ -1007,5 +1049,128 @@ test('插件 /remote/admin 统一 302 到网关 /admin（动态端口 + 令牌�
     else process.env.DSH_REMOTE_GATEWAY = savedGateway
     if (savedToken === undefined) delete process.env.DSH_REMOTE_TOKEN
     else process.env.DSH_REMOTE_TOKEN = savedToken
+  }
+})
+
+test('转写代理：鉴权、配置校验、test 模式与 SSE 流式透传', async () => {
+  // 存根 provider：记录收到的鉴权头/请求体，返回 OpenAI 兼容响应
+  const seen = { auth: null, modelsAuth: null, streamFlag: null, body: null }
+  const provider = http.createServer((req, res) => {
+    if (req.method === 'GET' && req.url === '/models') {
+      seen.modelsAuth = req.headers.authorization || null
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ data: [{ id: 'x' }] }))
+      return
+    }
+    if (req.method === 'POST' && req.url === '/chat/completions') {
+      seen.auth = req.headers.authorization || null
+      let b = ''
+      req.on('data', (c) => { b += c })
+      req.on('end', () => {
+        seen.body = JSON.parse(b)
+        seen.streamFlag = seen.body.stream
+        if (seen.body.model === 'fail-model') {
+          res.writeHead(401, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ error: { message: 'bad key', code: 401 } }))
+          return
+        }
+        if (seen.body.stream) {
+          res.writeHead(200, { 'content-type': 'text/event-stream' })
+          res.write('data: {"choices":[{"delta":{"content":"整理"}}]}\n\n')
+          res.write('data: {"choices":[{"delta":{"content":"结果"}}]}\n\n')
+          res.end('data: [DONE]\n\n')
+        } else {
+          res.writeHead(200, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ choices: [{ message: { content: 'non-stream' } }] }))
+        }
+      })
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  })
+  const providerPort = await new Promise((resolve) => provider.listen(0, '127.0.0.1', () => resolve(provider.address().port)))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-remote-transcribe-test-'))
+  const port = await getFreePort()
+  const tbase = `http://127.0.0.1:${port}`
+  const child = spawn(process.execPath, [GATEWAY], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      HOME: root,
+      USERPROFILE: root,
+      PORT: String(port),
+      HOST: '127.0.0.1',
+      DSH_UPSTREAM: 'http://127.0.0.1:1', // 不可达上游: 只测网关本地 /transcribe
+      TOKEN,
+      TOKEN_FILE: path.join(root, 'token'),
+      DSH_REMOTE_FS_ROOT: root,
+      DSH_REMOTE_NOTES: path.join(root, 'notes.json'),
+      UPDATE_CHECK_URL: 'http://127.0.0.1:1/update',
+      UPDATE_INTERVAL_MS: '3600000',
+      UPDATE_PROXY: '',
+      HTTP_PROXY: '',
+      HTTPS_PROXY: '',
+      ALL_PROXY: '',
+      NO_PROXY: '*'
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  child.stdout.on('data', () => {})
+  child.stderr.on('data', () => {})
+  const hdrs = { 'content-type': 'application/json', authorization: 'Bearer ' + TOKEN }
+  const payload = (over) => Object.assign({
+    base: `http://127.0.0.1:${providerPort}`,
+    model: 'gpt-x',
+    key: 'sk-test',
+    messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: '原文' }]
+  }, over)
+  try {
+    await waitForHealth(tbase)
+
+    // 无网关鉴权 → 401
+    let res = await fetch(tbase + '/transcribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload({})) })
+    assert.equal(res.status, 401)
+
+    // base 非 http(s) → 400
+    res = await fetch(tbase + '/transcribe', { method: 'POST', headers: hdrs, body: JSON.stringify(payload({ base: 'file:///etc/passwd' })) })
+    assert.equal(res.status, 400)
+
+    // test 模式: {ok:true, ms} 且 provider 收到 Bearer key
+    res = await fetch(tbase + '/transcribe', {
+      method: 'POST', headers: hdrs,
+      body: JSON.stringify({ test: true, base: payload({}).base, model: 'gpt-x', key: 'sk-test' })
+    })
+    assert.equal(res.status, 200)
+    const testData = await res.json()
+    assert.equal(testData.ok, true)
+    assert.ok(Number.isInteger(testData.ms) && testData.ms >= 0)
+    assert.equal(seen.modelsAuth, 'Bearer sk-test')
+
+    // 流式代理: SSE 透传 delta 与 [DONE], provider 收到 stream:true 与原文
+    res = await fetch(tbase + '/transcribe', { method: 'POST', headers: hdrs, body: JSON.stringify(payload({})) })
+    assert.equal(res.status, 200)
+    assert.match(res.headers.get('content-type') || '', /text\/event-stream/)
+    const body = await res.text()
+    assert.match(body, /整理/)
+    assert.match(body, /结果/)
+    assert.match(body, /\[DONE\]/)
+    assert.equal(seen.streamFlag, true)
+    assert.equal(seen.auth, 'Bearer sk-test')
+    assert.equal(seen.body.messages[1].content, '原文')
+
+    // provider 401 → 网关透传状态码与错误文本
+    res = await fetch(tbase + '/transcribe', { method: 'POST', headers: hdrs, body: JSON.stringify(payload({ model: 'fail-model' })) })
+    assert.equal(res.status, 401)
+    assert.match(String((await res.json()).msg), /bad key/)
+  } finally {
+    if (child.exitCode === null) child.kill('SIGTERM')
+    await Promise.race([
+      once(child, 'exit').then(() => {}),
+      new Promise((r) => setTimeout(r, 2000))
+    ])
+    provider.closeAllConnections?.()
+    await new Promise((resolve) => provider.close(resolve))
+    fs.rmSync(root, { recursive: true, force: true })
   }
 })

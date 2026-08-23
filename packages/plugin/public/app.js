@@ -148,25 +148,12 @@ async function submitFeedback() {
   const contact = $('fb-contact').value.trim()
   if (!message) { toast(t('feedback.empty'), 'err'); return }
   if (message.length > 2000) { toast(t('feedback.tooLong'), 'err'); return }
-  const btn = $('fb-submit')
-  btn.disabled = true
-  try {
-    const base = (state.server || '').replace(/\/+$/, '')
-    const res = await fetch(base + '/feedback', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + state.token },
-      body: JSON.stringify({ type, message, contact, appVersion: state.localVersion })
-    })
-    let json = {}
-    try { json = await res.json() } catch {}
-    if (res.ok && json.ok) { toast(t('feedback.submitted'), 'ok'); closeFeedbackModal() }
-    else if (res.status === 429) { toast(json.retryAfter ? t('feedback.rateLimitedAt', { n: json.retryAfter }) : t('feedback.rateLimited'), 'err') }
-    else { toast(t('feedback.submitFailed', { msg: json.error || res.status }), 'err') }
-  } catch {
-    toast(t('feedback.submitFailed', { msg: t('feedback.networkError') }), 'err')
-  } finally {
-    btn.disabled = false
-  }
+  // mod fork: 反馈直接唤起邮件客户端发往维护者邮箱, 不再经网关转发第三方收集器。
+  const subject = encodeURIComponent('[DSH Remote 反馈] ' + type)
+  const body = encodeURIComponent(message + (contact ? '\n\n联系方式：' + contact : ''))
+  location.href = 'mailto:p2128887242@outlook.com?subject=' + subject + '&body=' + body
+  closeFeedbackModal()
+  toast(t('feedback.mailOpen'), 'ok')
 }
 
 function fmtTime(ts) {
@@ -1640,7 +1627,10 @@ function insertLiveEvent(event) {
     h.renderStart = Math.max(0, h.renderEnd - 200)
     renderHistory(false, 'bottom')
   } else {
-    renderHistory(false, 'keep')
+    // 图片异步撑高历史区后，用户可能瞬间不再满足 nearBottom。新回复仍须
+    // 扩展可见窗口，但保持当前阅读位置，不能等到重新进入会话才出现。
+    h.renderEnd = h.visible.length
+    renderHistory(false, 'fixed')
   }
   scheduleHistoryCacheSave()
 }
@@ -1683,6 +1673,7 @@ function renderHistory(reset, mode = 'bottom') {
   box.innerHTML = filtered.slice(start, end).map(e => eventHtml(e, { toolNames })).join('')
   if (reset || mode === 'bottom') box.scrollTop = box.scrollHeight
   else if (mode === 'keep') box.scrollTop = Math.max(0, oldTop + (box.scrollHeight - oldH))
+  else if (mode === 'fixed') box.scrollTop = oldTop
   updateRail()
 }
 
@@ -1855,8 +1846,11 @@ function statsHtml(s) {
   return html || '<div class="empty">' + t('stats.empty') + '</div>'
 }
 
+let sessionCardsRenderGeneration = 0
 async function renderSessionCards() {
-  const s = state.byId.get(state.current)
+  const renderGeneration = ++sessionCardsRenderGeneration
+  const sessionId = state.current
+  const s = state.byId.get(sessionId)
   const box = $('session-cards')
   const statsBox = $('stats-body')
   if (!s) { box.innerHTML = ''; if (statsBox) statsBox.innerHTML = ''; return }
@@ -1887,7 +1881,8 @@ async function renderSessionCards() {
     btn.addEventListener('click', () => goalAction(btn.dataset.goal)))
 
   // 子代理
-  const sub = await safeRpc('subagent.list', { parentSessionId: state.current })
+  const sub = await safeRpc('subagent.list', { parentSessionId: sessionId })
+  if (renderGeneration !== sessionCardsRenderGeneration || state.current !== sessionId) return
   if (sub?.entries?.length) {
     const rows = sub.entries.map(e => {
       if (e.kind === 'diagnostic') return `<div class="card-row"><span class="k">${t('subagent.diagnostic')}</span><span class="v">${esc(e.reason)}</span></div>`
@@ -2325,7 +2320,9 @@ function renderOverview() {
   const ring = $('overview-pulse-ring')
   if (!ring) return
   const checks = {
-    gateway: !!state.token && !!state.server,
+    // 独立网关页面默认走同源，此时 state.server 合法地为空；不能因此把
+    // 已连接网关误报为离线。Capacitor 等非 HTTP 页面仍要求显式服务器。
+    gateway: !!state.token && (!!state.server || /^https?:$/.test(location.protocol)),
     dsh: !!state.hostInfo,
     mux: !!state.streamsOk?.mux,
     host: !!state.streamsOk?.host
@@ -3633,7 +3630,8 @@ function showSettingsPage(name) {
 /* ---------------- prompt 转写 ---------------- */
 const TC = window.TranscribeCore
 const TRANSCRIBE_LS = { on: 'dshPromptTranscribe', url: 'dshTranscribeApiUrl', model: 'dshTranscribeModel', key: 'dshTranscribeApiKey' }
-const TRANSCRIBE_TIMEOUT = 30000
+const TRANSCRIBE_STREAM_IDLE_MS = 30000 // 流式读取: 两次数据块之间的最长静默
+const TRANSCRIBE_STREAM_TOTAL_MS = 120000 // 单次转写总上限(含首字节等待)
 let transcribeKeyEditing = false
 
 function transcribeCfg() {
@@ -3653,18 +3651,97 @@ function transcribeErrText(err) {
   if (err && (err.name === 'AbortError' || err.name === 'TypeError')) return t('transcribe.networkError')
   return err && err.message ? err.message : t('transcribe.networkError')
 }
-async function transcribeChat(cfg, raw) {
-  const res = await fetch(cfg.url + '/chat/completions', {
+function transcribeGatewayBase() {
+  // 一律经网关 /transcribe 代理转发(规避 WebView 直连第三方 API 的 CORS 限制);
+  // 浏览器直接打开网关页面时退化为同源请求
+  const s = (state.server || '').replace(/\/+$/, '')
+  if (s) return s
+  if (location.protocol === 'http:' || location.protocol === 'https:') return location.origin
+  return ''
+}
+async function transcribePost(cfg, payload) {
+  const base = transcribeGatewayBase()
+  if (!base) throw new Error(t('transcribe.networkError'))
+  const res = await fetch(base + '/transcribe', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.key },
-    body: JSON.stringify({ model: cfg.model, messages: [{ role: 'system', content: TC.TRANSCRIBE_SYSTEM_PROMPT }, { role: 'user', content: raw }] }),
-    signal: AbortSignal.timeout(TRANSCRIBE_TIMEOUT)
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + state.token },
+    body: JSON.stringify(payload)
   })
-  if (!res.ok) throw new Error(TC.statusMessage(res.status))
-  const data = await res.json()
-  const text = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content
-  if (typeof text !== 'string') throw new Error(t('transcribe.noContent'))
-  return text
+  if (!res.ok) {
+    let detail = ''
+    try { const j = await res.json(); detail = String(j.msg || j.error || '') } catch {}
+    if (detail) throw new Error(detail) // 网关校验提示或上游错误文本优先展示
+    throw new Error(TC.statusMessage(res.status))
+  }
+  return res
+}
+async function transcribeChat(cfg, raw, onDelta) {
+  const payload = {
+    base: cfg.url,
+    model: cfg.model,
+    key: cfg.key,
+    messages: [{ role: 'system', content: TC.TRANSCRIBE_SYSTEM_PROMPT }, { role: 'user', content: raw }]
+  }
+  let started = false
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const res = await transcribePost(cfg, payload)
+      const ctype = res.headers.get('content-type') || ''
+      // 极少数服务端忽略 stream:true 返回普通 JSON → 走非流式分支
+      if (ctype.includes('application/json')) {
+        const data = await res.json()
+        const text = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content
+        if (typeof text !== 'string') throw new Error(t('transcribe.noContent'))
+        if (onDelta) onDelta(text)
+        return text
+      }
+      // SSE 流式: 逐行解析增量文本; 空闲超时(每块重置)与总超时都会中止读取
+      const ctrl = new AbortController()
+      const totalTimer = setTimeout(() => ctrl.abort(), TRANSCRIBE_STREAM_TOTAL_MS)
+      let idleTimer = null
+      const resetIdle = () => {
+        clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => ctrl.abort(), TRANSCRIBE_STREAM_IDLE_MS)
+      }
+      resetIdle()
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      let full = ''
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          let nl
+          while ((nl = buf.indexOf('\n')) !== -1) {
+            const line = buf.slice(0, nl).trim()
+            buf = buf.slice(nl + 1)
+            if (!line.startsWith('data:')) continue
+            const parsed = TC.parseSseData(line)
+            if (parsed.type === 'done') { reader.cancel(); break }
+            if (parsed.type === 'error') throw new Error(parsed.error)
+            if (parsed.type === 'delta') {
+              started = true
+              full += parsed.text
+              if (onDelta) onDelta(parsed.text)
+            }
+          }
+          resetIdle()
+        }
+      } finally {
+        clearTimeout(totalTimer)
+        clearTimeout(idleTimer)
+      }
+      if (!full) throw new Error(t('transcribe.noContent'))
+      return full
+    } catch (err) {
+      // 只在首个字节到达前的网络层错误(连网关失败)重试一次, 流中间断流不重试
+      const retriable = attempt === 1 && !started && err && err.name === 'TypeError'
+      if (!retriable) throw err
+      await new Promise((r) => setTimeout(r, 800))
+    }
+  }
 }
 
 /* --- 设置页 --- */
@@ -3714,13 +3791,15 @@ async function transcribeConnTest() {
   const t0 = performance.now()
   let errText = ''
   try {
-    const res = await fetch(cfg.url + '/models', {
-      headers: { 'Authorization': 'Bearer ' + cfg.key },
-      signal: AbortSignal.timeout(TRANSCRIBE_TIMEOUT)
-    })
+    const res = await transcribePost(cfg, { test: true, base: cfg.url, model: cfg.model, key: cfg.key })
+    const data = await res.json()
     const ms = Math.round(performance.now() - t0)
-    if (!res.ok) errText = TC.statusMessage(res.status)
-    else { const ok = t('transcribe.statusConnOk', { ms }); setTranscribeStatus(ok); return toast(ok, 'ok') }
+    if (data.ok) {
+      const ok = t('transcribe.statusConnOk', { ms })
+      setTranscribeStatus(ok)
+      return toast(ok, 'ok')
+    }
+    errText = data.error === 'network' ? t('transcribe.networkError') : (data.error || TC.statusMessage(data.status || 0))
   } catch (err) { errText = transcribeErrText(err) }
   const fail = t('transcribe.statusConnFail', { msg: errText })
   setTranscribeStatus(fail)
@@ -3749,9 +3828,10 @@ async function runTranscribeTest() {
   const raw = $('transcribe-test-input')?.value || ''
   if (!raw.trim()) return toast(t('transcribe.testEmpty'), 'err')
   setTranscribeTestBusy(true)
+  const out = $('transcribe-test-output')
+  if (out) out.value = ''
   try {
-    const text = await transcribeChat(transcribeCfg(), raw)
-    if ($('transcribe-test-output')) $('transcribe-test-output').value = text
+    await transcribeChat(transcribeCfg(), raw, (piece) => { if (out) out.value += piece })
     toast(t('transcribe.testDone'), 'ok')
   } catch (err) { toast(t('transcribe.testFailed', { msg: transcribeErrText(err) }), 'err') }
   finally { setTranscribeTestBusy(false) }
@@ -3774,13 +3854,21 @@ async function composerTranscribe() {
   const raw = input.value
   if (!raw.trim()) return toast(t('transcribe.needText'), 'err')
   if (btn) { btn.disabled = true; btn.textContent = t('composer.transcribing') }
+  let acc = ''
   try {
-    const text = await transcribeChat(cfg, raw)
-    input.value = text
-    input.selectionStart = input.selectionEnd = text.length
+    await transcribeChat(cfg, raw, (piece) => {
+      acc += piece
+      input.value = acc
+      input.selectionStart = input.selectionEnd = acc.length
+      autosize(input)
+    })
+    input.value = acc
+    input.selectionStart = input.selectionEnd = acc.length
     autosize(input)
     toast(t('composer.transcribeDone'), 'ok')
   } catch (err) {
+    // 流中断时保留部分结果会覆盖原文, 按"不丢原文"约定恢复原文
+    if (acc) { input.value = raw; autosize(input); toast(t('composer.transcribeRestored'), 'ok') }
     toast(t('composer.transcribeFail', { msg: transcribeErrText(err) }), 'err')
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = t('composer.transcribe') }
@@ -3789,6 +3877,9 @@ async function composerTranscribe() {
 
 function updateConn() {
   const el = $('conn-badge')
+  // mux/host 的打开顺序不稳定；连接状态改变时同步重绘总览，避免后打开的
+  // 通道只更新顶栏、总览却永久停留在 3/4。
+  renderOverview()
   const cur = state.servers.find(s => s.url === state.server)
   const ms = state.serverLatency[state.server]
   const curGroup = cur ? cur.group : state.activeGroup

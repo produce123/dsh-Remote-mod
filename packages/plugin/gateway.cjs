@@ -808,53 +808,70 @@ function startEventCollector(kind) {
   }
   const connect = () => {
     if (stopped) return
+    let current
     try {
-      ws = new WebSocket(url)
+      current = new WebSocket(url)
+      ws = current
     } catch (err) {
       state.lastError = String(err?.message || err)
+      state.connected = false
+      state.reconnects++
       schedule()
       return
     }
-    const current = ws
+    let finished = false
+    const clearConnectTimer = () => {
+      if (connectTimer) clearTimeout(connectTimer)
+      connectTimer = null
+    }
+    // Node WebSocket 在 CONNECTING 阶段失败时可能只触发 error，
+    // 调用 close() 后不保证再触发 close。每次尝试因此必须有一个
+    // 幂等的收口，任何 error/close/timeout 都只安排一次重连。
+    const finishAndRetry = (closeCode = 0, closeReason = '') => {
+      if (finished) return
+      finished = true
+      clearConnectTimer()
+      state.connected = false
+      state.lastCloseCode = Number(closeCode) || 0
+      state.lastCloseReason = String(closeReason || '')
+      if (ws === current) ws = null
+      if (stopped) return
+      state.reconnects++
+      schedule()
+    }
     connectTimer = setTimeout(() => {
-      if (ws === current && current.readyState === 0) {
+      if (!finished && ws === current && current.readyState === 0) {
         state.lastError = 'websocket connect timeout'
+        finishAndRetry()
         try { current.close() } catch {}
       }
     }, WS_UPGRADE_TIMEOUT_MS)
     connectTimer.unref?.()
-    ws.onopen = () => {
-      if (connectTimer) clearTimeout(connectTimer)
-      connectTimer = null
-      if (state) {
-        state.connected = true
-        state.lastConnectAt = Date.now()
-        state.lastError = ''
-        state.attempt = 0
+    current.onopen = () => {
+      if (finished || ws !== current || stopped) {
+        try { current.close() } catch {}
+        return
       }
-      if (stopped) { try { ws.close() } catch {} }
+      clearConnectTimer()
+      state.connected = true
+      state.lastConnectAt = Date.now()
+      state.lastError = ''
+      state.attempt = 0
     }
-    ws.onmessage = (ev) => {
+    current.onmessage = (ev) => {
       if (stopped) return
       try {
         const data = typeof ev.data === 'string' ? ev.data : Buffer.isBuffer(ev.data) ? ev.data.toString() : String(ev.data)
         pushEvent(kind, JSON.parse(data), data)
       } catch {}
     }
-    ws.onclose = () => {
-      if (connectTimer) clearTimeout(connectTimer)
-      connectTimer = null
-      if (state) {
-        state.connected = false
-        state.reconnects++
-        state.lastCloseCode = Number(current?.closeCode) || 0
-        state.lastCloseReason = String(current?.closeReason || '')
-      }
-      ws = null
-      schedule()
+    current.onclose = (ev) => {
+      finishAndRetry(ev?.code, ev?.reason)
     }
-    ws.onerror = (err) => {
-      if (state) state.lastError = String(err?.message || 'websocket error')
+    current.onerror = (err) => {
+      if (finished) return
+      state.lastError = String(err?.error?.message || err?.message || 'websocket error')
+      finishAndRetry()
       try { current.close() } catch {}
     }
   }
@@ -969,9 +986,11 @@ function serveStats(req, res, url) {
 // ---------- 反馈提交 ----------
 const feedbackThrottle = new Map()   // ip -> 上次受理时间戳
 const FEEDBACK_WINDOW_MS = 60 * 1000
-// 反馈收集器: 环境变量可覆盖, 默认使用公网 HTTPS 入口。
-// 不能把 Tailscale 地址作为默认值，否则普通公网用户的网关无法转发反馈。
-const FEEDBACK_URL = process.env.DSH_REMOTE_FEEDBACK_URL || 'https://feedback.blankalwaysgoeson.site/submit'
+// 反馈收集器: 环境变量可覆盖, 默认使用 Tailscale Funnel 提供的公网 HTTPS
+// 入口。这里是公开的 ts.net 域名，不要求提交反馈的用户加入 tailnet。
+// mod fork: 默认不向任何第三方收集器转发反馈(原项目收集器已停用, 避免打扰原作者)。
+// 客户端反馈已改为 mailto 直达维护者邮箱; 如自行部署收集器可用 DSH_REMOTE_FEEDBACK_URL 覆盖。
+const FEEDBACK_URL = process.env.DSH_REMOTE_FEEDBACK_URL || ''
 
 function maskIp(ip) {
   if (!ip) return 'unknown'
@@ -1051,6 +1070,12 @@ function serveFeedback(req, res, url) {
       return
     }
 
+    if (!FEEDBACK_URL) {
+      // 未配置收集器: 不转发、不占节流位, 返回提示引导渠道。
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: true, noCollector: true }))
+      return
+    }
     // 转发收集器(收集器服务端已做校验/节流/落盘)。节流只在收集器确认成功后占位,
     // 失败(429/502/网络错误)不占位, 用户可立即重试。
     fetch(FEEDBACK_URL, {
@@ -2204,9 +2229,132 @@ async function serveHealth(res) {
   }))
 }
 
+/* ---------------- prompt 转写代理 ---------------- */
+// 客户端直连第三方 OpenAI 兼容 API 会被 Capacitor WebView 的 CORS 拦截且无法统一
+// 错误处理, 故经本网关转发: 网关鉴权(token) → 带上用户的第三方 key 请求 provider。
+// key 只在用户本机网关与 provider 之间传递, 与 admin token 同信任模型, 不落盘不记日志。
+const TRANSCRIBE_PROXY_TIMEOUT_MS = 120000
+
+function serveTranscribe(req, res, url) {
+  cors(res)
+  if (req.method !== 'POST') {
+    res.writeHead(405, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ error: 'method not allowed' }))
+    return
+  }
+  if (!authorized(req, url)) {
+    res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ error: 'unauthorized' }))
+    return
+  }
+  let body = ''
+  let oversized = false
+  req.on('data', (c) => {
+    body += c
+    if (body.length > 64 * 1024) { oversized = true; req.destroy() }
+  })
+  req.on('end', async () => {
+    if (oversized) {
+      res.writeHead(413, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: 'payload too large' }))
+      return
+    }
+    let payload
+    try { payload = JSON.parse(body || '{}') } catch {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: 'invalid json' }))
+      return
+    }
+    const { base, model, key, test, messages } = payload
+    const baseOk = typeof base === 'string' && /^https?:\/\//i.test(base) && base.length <= 2048
+    const modelOk = typeof model === 'string' && model.length > 0 && model.length <= 256
+    const keyOk = typeof key === 'string' && key.length > 0 && key.length <= 512
+    if (!baseOk || !modelOk || !keyOk) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: 'invalid config' }))
+      return
+    }
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), TRANSCRIBE_PROXY_TIMEOUT_MS)
+    // 客户端断连(响应流提前关闭)时中止上游请求; 正常完成后的 close 是无害的空 abort。
+    // 注意不能用 req.on('close'): keep-alive 下请求体读完就会触发, 会把在途 fetch 误杀。
+    res.on('close', () => ctrl.abort())
+    try {
+      if (test) {
+        const t0 = Date.now()
+        const r = await fetch(base + '/models', {
+          headers: { authorization: 'Bearer ' + key },
+          signal: ctrl.signal
+        }).catch(() => null)
+        clearTimeout(timer)
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify(r ? { ok: r.ok, status: r.status, ms: Math.round(Date.now() - t0) } : { ok: false, error: 'network' }))
+        return
+      }
+      const msgsOk = Array.isArray(messages) && messages.length > 0 && messages.every((m) =>
+        m && typeof m.role === 'string' && typeof m.content === 'string' &&
+        m.content.length > 0 && m.content.length <= 30000 && messages.length <= 8
+      )
+      if (!msgsOk) {
+        res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: 'messages required' }))
+        return
+      }
+      const up = await fetch(base + '/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'text/event-stream', authorization: 'Bearer ' + key },
+        body: JSON.stringify({ model, stream: true, messages }),
+        signal: ctrl.signal
+      }).catch(() => null)
+      if (!up) {
+        res.writeHead(502, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: 'network', msg: '无法连接模型服务' }))
+        return
+      }
+      if (!up.ok) {
+        const detail = await up.text().catch(() => '')
+        clearTimeout(timer)
+        res.writeHead(up.status, { 'content-type': 'application/json; charset=utf-8' })
+        // 透传 provider 状态码与首段错误文本, 客户端用 statusMessage 映射成用户文案
+        res.end(JSON.stringify({ error: String(up.status), msg: detail.slice(0, 300) }))
+        return
+      }
+      if ((up.headers.get('content-type') || '').includes('application/json')) {
+        // 极少数服务端忽略 stream:true 返回普通 JSON: 原样透传, 客户端按 JSON 分支解析
+        clearTimeout(timer)
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        for await (const chunk of up.body) { if (!res.destroyed) res.write(chunk) }
+        res.end()
+        return
+      }
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache',
+        'x-accel-buffering': 'no'
+      })
+      for await (const chunk of up.body) {
+        if (!res.destroyed) res.write(chunk)
+        else { ctrl.abort(); break }
+      }
+      res.end()
+      clearTimeout(timer)
+    } catch {
+      clearTimeout(timer)
+      if (!res.headersSent) {
+        res.writeHead(502, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: 'proxy error' }))
+      } else {
+        res.destroy()
+      }
+    }
+  })
+}
+
 function lanAddresses() {
   const out = []
-  for (const infos of Object.values(os.networkInterfaces())) {
+  let groups
+  try { groups = Object.values(os.networkInterfaces()) } catch { return out }
+  for (const infos of groups) {
     for (const info of infos || []) {
       if (info.family === 'IPv4' && !info.internal) out.push(info.address)
     }
@@ -2220,6 +2368,7 @@ const server = http.createServer((req, res) => {
     if (url.pathname === '/fs' || url.pathname.startsWith('/fs/')) return serveFs(req, res, url)
     if (url.pathname === '/workbench' || url.pathname.startsWith('/workbench/')) return serveWorkbench(req, res, url)
     if (url.pathname === '/feedback') return serveFeedback(req, res, url)
+    if (url.pathname === '/transcribe') return serveTranscribe(req, res, url)
     if (url.pathname.startsWith('/admin/api')) return serveAdminApi(req, res, url)
     if (url.pathname.startsWith('/stats')) return serveStats(req, res, url)
     if (url.pathname === '/api/ws-ticket') return serveWsTicket(req, res, url)
