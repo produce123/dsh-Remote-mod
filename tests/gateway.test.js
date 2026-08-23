@@ -23,6 +23,7 @@ const os = require('node:os')
 const path = require('node:path')
 const net = require('node:net')
 const { once } = require('node:events')
+const { pathToFileURL } = require('node:url')
 
 const ROOT = path.join(__dirname, '..')
 const GATEWAY = path.join(ROOT, 'gateway.js')
@@ -823,3 +824,188 @@ test('事件轮询：upstream 不可达时接口仍可用（纯内存读）', as
 // 说明：版本比较函数 cmpVersion/parseVersion 位于 public/app.js（浏览器端），
 // 不在 gateway.js 进程内；按任务约束不为它引入 vm/DOM 模拟，因此这里只覆盖
 // 网关侧的 /update.json 版本兼容输出（rc 后缀剥离逻辑）。
+
+test('设备去重：同一 IP 多 clientId/channel/poll 只输出 1 行并正确聚合', async () => {
+  const dedupPort = await getFreePort()
+  const dedupRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-remote-dedup-test-'))
+  const dedupChild = spawn(process.execPath, [GATEWAY], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      HOME: dedupRoot,
+      USERPROFILE: dedupRoot,
+      PORT: String(dedupPort),
+      HOST: '127.0.0.1',
+      DSH_UPSTREAM: 'http://127.0.0.1:1', // 不可达上游: 只验证网关本地设备表
+      TOKEN,
+      TOKEN_FILE: path.join(dedupRoot, 'token'),
+      DSH_REMOTE_FS_ROOT: dedupRoot,
+      DSH_REMOTE_NOTES: path.join(dedupRoot, 'notes.json'),
+      UPDATE_CHECK_URL: 'http://127.0.0.1:1/update',
+      UPDATE_INTERVAL_MS: '3600000',
+      UPDATE_PROXY: '',
+      HTTP_PROXY: '',
+      HTTPS_PROXY: '',
+      ALL_PROXY: '',
+      NO_PROXY: '*',
+      GATEWAY_WS_PING_MS: '0',
+      GATEWAY_WS_IDLE_MS: '60000'
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  dedupChild.stdout.on('data', () => {})
+  dedupChild.stderr.on('data', () => {})
+  const socks = []
+  try {
+    await waitForHealth(`http://127.0.0.1:${dedupPort}`, 10000)
+    // 两台“设备”都来自 127.0.0.1: 两个不同 clientId 的 WS(模拟 2 个连接) + 一次轮询 HTTP
+    const upgrade = (qs, extraHeader) => new Promise((resolve, reject) => {
+      const sock = net.connect(dedupPort, '127.0.0.1')
+      let buf = ''
+      const timer = setTimeout(() => { sock.destroy(); reject(new Error('upgrade timed out')) }, 5000)
+      sock.on('error', reject)
+      sock.on('data', (d) => {
+        buf += d.toString('binary')
+        if (buf.includes('101 Switching Protocols')) {
+          clearTimeout(timer)
+          socks.push(sock)
+          resolve(sock)
+        }
+      })
+      sock.write(
+        `GET /api/events.mux${qs ? '?' + qs : ''} HTTP/1.1\r\n` +
+        'Host: 127.0.0.1\r\n' +
+        'Upgrade: websocket\r\n' +
+        'Connection: Upgrade\r\n' +
+        `Sec-WebSocket-Key: ${crypto.randomBytes(16).toString('base64')}\r\n` +
+        'Sec-WebSocket-Version: 13\r\n' +
+        `${extraHeader}\r\n` +
+        '\r\n'
+      )
+    })
+    await upgrade(`token=${TOKEN}&clientId=dev-abcd`, 'x-dsh-remote-client: app')
+    await upgrade(`token=${TOKEN}&clientId=dev-ef01`, 'x-dsh-remote-client: web')
+    // 同 IP 的 HTTP 轮询行(key=ip, 无 clientId)
+    const pollRes = await fetch(`http://127.0.0.1:${dedupPort}/api/events.poll?kind=mux&since=0`, {
+      headers: authHeaders({ 'x-dsh-remote-client': 'web' })
+    })
+    assert.equal(pollRes.status, 200)
+    // 管理页自身请求不计入设备
+    const stateRes = await fetch(`http://127.0.0.1:${dedupPort}/admin/api/state?token=${TOKEN}`, {
+      headers: { 'x-dsh-remote-client': 'admin' }
+    })
+    assert.equal(stateRes.status, 200)
+    const state = await stateRes.json()
+    assert.equal(state.deviceCount, 1, '同 IP 多记录应聚合成 1 台设备')
+    assert.equal(state.onlineCount, 1)
+    assert.equal(state.devices.length, 1)
+    const dev = state.devices[0]
+    assert.equal(dev.ip, '127.0.0.1')
+    assert.equal(dev.kind, 'app', 'kind 按优先级聚合(app>web>browser)')
+    assert.equal(dev.clientId, 'dev-abcd', '首个非空 clientId 保留')
+    assert.equal(dev.requests, 3, 'WS×2 + poll×1 的请求数聚合')
+    assert.equal(dev.channels.mux, true)
+    assert.equal(dev.channelCounts.mux, 2, '两个通道计数聚合')
+    assert.equal(dev.online, true, '有存活 socket 应在线')
+    assert.equal(state.devices.every((d) => d.kind !== 'admin'), true, '管理页自身不计入设备')
+  } finally {
+    for (const s of socks) { try { s.destroy() } catch {} }
+    if (dedupChild.exitCode === null) dedupChild.kill('SIGTERM')
+    await Promise.race([
+      once(dedupChild, 'exit').then(() => {}),
+      new Promise((r) => setTimeout(r, 2000))
+    ])
+    fs.rmSync(dedupRoot, { recursive: true, force: true })
+  }
+})
+
+test('令牌轮换：旧令牌 401、新令牌可用、TOKEN_FILE 写回新值', async () => {
+  const rotatePort = await getFreePort()
+  const rotateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-remote-rotate-test-'))
+  const tokenFile = path.join(rotateRoot, 'token')
+  const oldToken = 'old-token-1'
+  fs.writeFileSync(tokenFile, oldToken + '\n')
+  const env = {
+    ...process.env,
+    HOME: rotateRoot,
+    USERPROFILE: rotateRoot,
+    PORT: String(rotatePort),
+    HOST: '127.0.0.1',
+    DSH_UPSTREAM: 'http://127.0.0.1:1',
+    TOKEN_FILE: tokenFile,
+    DSH_REMOTE_FS_ROOT: rotateRoot,
+    DSH_REMOTE_NOTES: path.join(rotateRoot, 'notes.json'),
+    UPDATE_CHECK_URL: 'http://127.0.0.1:1/update',
+    UPDATE_INTERVAL_MS: '3600000',
+    UPDATE_PROXY: '',
+    HTTP_PROXY: '',
+    HTTPS_PROXY: '',
+    ALL_PROXY: '',
+    NO_PROXY: '*'
+  }
+  delete env.TOKEN // 令牌只来自 TOKEN_FILE, rotate 才有写回路径
+  const rotateChild = spawn(process.execPath, [GATEWAY], {
+    cwd: ROOT,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  rotateChild.stdout.on('data', () => {})
+  rotateChild.stderr.on('data', () => {})
+  try {
+    const base = `http://127.0.0.1:${rotatePort}`
+    await waitForHealth(base, 10000)
+    const adminHeader = { 'x-dsh-remote-client': 'admin' }
+    const rotateRes = await fetch(`${base}/admin/api/token/rotate?token=${oldToken}`, {
+      method: 'POST',
+      headers: adminHeader
+    })
+    assert.equal(rotateRes.status, 200)
+    const rotated = await rotateRes.json()
+    assert.equal(rotated.ok, true)
+    assert.ok(rotated.token && rotated.token !== oldToken, '应生成新令牌')
+    const newToken = rotated.token
+    const oldState = await fetch(`${base}/admin/api/state?token=${oldToken}`, { headers: adminHeader })
+    assert.equal(oldState.status, 401, '旧令牌应失效')
+    const newState = await fetch(`${base}/admin/api/state?token=${newToken}`, { headers: adminHeader })
+    assert.equal(newState.status, 200, '新令牌应可用')
+    const body = await newState.json()
+    assert.equal(body.token, newToken)
+    assert.equal(fs.readFileSync(tokenFile, 'utf8').trim(), newToken, 'TOKEN_FILE 应写回新令牌')
+  } finally {
+    if (rotateChild.exitCode === null) rotateChild.kill('SIGTERM')
+    await Promise.race([
+      once(rotateChild, 'exit').then(() => {}),
+      new Promise((r) => setTimeout(r, 2000))
+    ])
+    fs.rmSync(rotateRoot, { recursive: true, force: true })
+  }
+})
+
+test('插件 /remote/admin 统一 302 到网关 /admin（动态端口 + 令牌）', async () => {
+  const savedGateway = process.env.DSH_REMOTE_GATEWAY
+  const savedToken = process.env.DSH_REMOTE_TOKEN
+  try {
+    process.env.DSH_REMOTE_GATEWAY = 'http://127.0.0.1:9123'
+    process.env.DSH_REMOTE_TOKEN = 'rotate-token-abc'
+    const mod = await import(pathToFileURL(path.join(ROOT, 'packages/plugin/index.mjs')).href)
+    const { serveStatic } = mod
+    const cases = [
+      ['/remote/admin', 'http://127.0.0.1:9123/admin?token=rotate-token-abc'],
+      ['/remote/admin/', 'http://127.0.0.1:9123/admin?token=rotate-token-abc'],
+      ['/remote/admin.html', 'http://127.0.0.1:9123/admin?token=rotate-token-abc'],
+      ['/remote/admin/index.html', 'http://127.0.0.1:9123/admin?token=rotate-token-abc'],
+      ['/remote/admin?x=1', 'http://127.0.0.1:9123/admin?x=1&token=rotate-token-abc']
+    ]
+    for (const [pathname, expected] of cases) {
+      const res = { writeHead(status, headers) { this.status = status; this.headers = headers }, end() {} }
+      await serveStatic({ url: pathname }, res, {})
+      assert.equal(res.status, 302, pathname + ' 应 302')
+      assert.equal(res.headers.location, expected, pathname + ' 重定向地址')
+    }
+  } finally {
+    if (savedGateway === undefined) delete process.env.DSH_REMOTE_GATEWAY
+    else process.env.DSH_REMOTE_GATEWAY = savedGateway
+    if (savedToken === undefined) delete process.env.DSH_REMOTE_TOKEN
+    else process.env.DSH_REMOTE_TOKEN = savedToken
+  }
+})

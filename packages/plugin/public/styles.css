@@ -246,6 +246,8 @@ body.in-session .main {
   padding: 12px 12px 0;
 }
 body.in-session .bottom-nav { display: none; }
+/* 会话页贴底: 底部导航已隐藏, 输入框直接贴屏幕底部(安全区由 .composer 内边距 calc(8px + var(--dsr-safe-b)) 处理) */
+body.in-session .composer-wrap { bottom: 0; }
 body.in-session .view {
   flex: 1;
   min-height: 0;

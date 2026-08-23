@@ -69,6 +69,8 @@ const state = {
   questions: [],
   questionModal: null,
   streamsOk: { mux: false, host: false },
+  gatewayHealth: null,
+  authFailed: false,
   errCount: 0,
   streamInfo: {
     mux: { status: 'idle', lastOpenAt: 0, lastCloseAt: 0, lastCloseCode: 0, lastCloseReason: '' },
@@ -243,7 +245,7 @@ async function loadSessionModels() {
     state.models.failures = v.failures || []
     state.models.loaded = true
   } catch (e) {
-    if (e.message === 'AUTH') { toast(t('ds.toastAuth'), 'err'); state.models.loading = false; renderModelMenu(); return }
+    if (e.message === 'AUTH') { state.models.loading = false; renderModelMenu(); authFail(); return }
     toast(t('models.loadFailed', { msg: e.message }), 'err')
   }
   state.models.loading = false
@@ -527,6 +529,7 @@ async function getWsTicket() {
       method: 'POST',
       headers: { authorization: 'Bearer ' + token, 'x-dsh-remote-client': 'web' }
     })
+    if (res.status === 401) throw new Error('AUTH')
     if (!res.ok) throw new Error('ws ticket HTTP ' + res.status)
     const data = await res.json()
     if (!data?.ticket || !Number(data.expiresAt)) throw new Error('invalid ws ticket')
@@ -569,10 +572,75 @@ async function respond(rpcId, value) {
 async function safeRpc(method, payload, errText) {
   try { return await rpc(method, payload) }
   catch (e) {
-    if (e.message === 'AUTH') { toast(t('ds.toastAuth'), 'err'); return null }
+    if (e.message === 'AUTH') { authFail(); return null }
     toast(errText ? `${errText}：${e.message}` : e.message, 'err')
     return null
   }
+}
+
+/* ---------------- 令牌失效收口 ---------------- */
+// 单一 401 处理: 首次 401 停止一切重试(轮询/重连/WS), 只提示一次;
+// 插件源宿主的桌面可同源拉取新令牌自动续牌, 网关源宿主退化为输入引导。
+function authFail() {
+  if (state.authFailed) return
+  state.authFailed = true
+  stopAllRetries()
+  toast(t('ds.toastAuth'), 'err')
+  void tryRenewToken()
+}
+
+function stopAllRetries() {
+  stopPolling()
+  clearReconnect()
+  closeStream('mux')
+  closeStream('host')
+  clearStreamRetry('mux')
+  clearStreamRetry('host')
+}
+
+async function renewTokenIfPluginHosted() {
+  // 仅插件源同源路径(/remote/...): 局域网 127.0.0.1:8080/desktop 跨域到 DSH 会被 CORS 拦,
+  // 不做自动续牌(网关 CORS 不含通配, 见 gateway.js cors())。
+  if (!location.pathname.startsWith('/remote/')) return null
+  try {
+    const res = await fetch('/remote/admin/api/state', { cache: 'no-store' })
+    if (!res.ok) return null
+    const j = await res.json()
+    if (j.token && j.token !== state.token) return j.token
+  } catch {}
+  return null
+}
+
+function authBanner(show) {
+  const b = $('ds-auth-banner')
+  if (b) b.classList.toggle('hidden', !show)
+}
+
+function promptForToken() {
+  const input = prompt(t('ds.tokenTitle'))
+  if (input && input.trim() && input.trim() !== state.token) adoptToken(input.trim())
+}
+
+async function tryRenewToken() {
+  const nt = await renewTokenIfPluginHosted()
+  if (nt) return adoptToken(nt)
+  // 续牌不可用: 清掉过期 localStorage, 横幅 + 一次明确输入引导
+  LS.del('token')
+  authBanner(true)
+  promptForToken()
+}
+
+function adoptToken(next) {
+  state.token = next
+  state.authFailed = false
+  LS.set('token', next)
+  authBanner(false)
+  const el = $('token-desc')
+  if (el) el.textContent = '● ' + next.slice(0, 12) + '…'
+  state.errCount = 0
+  updateConn()
+  openStreams()
+  refreshSessions()
 }
 function uuid() {
   try { return crypto.randomUUID() } catch { return 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2) }
@@ -925,18 +993,19 @@ function clearReconnect() {
 }
 
 function openStreams() {
-  if (!state.token) return
+  if (!state.token || state.authFailed) return
   if (state.streamMode !== 'poll') state.streamMode = 'ws'
   openStream('mux', onMuxFrame, true)
   openStream('host', onHostFrame, false)
 }
 function openStream(kind, handler, refreshOnOpen, isRestore, ticket = null) {
-  if (!state.token) return
+  if (!state.token || state.authFailed) return
   if (ticket === null) {
     const token = state.token
     void getWsTicket().then((value) => {
       if (state.token === token) openStream(kind, handler, refreshOnOpen, isRestore, value)
-    }).catch(() => {
+    }).catch((e) => {
+      if (e && e.message === 'AUTH') return authFail()
       // 兼容旧网关/插件副本: ticket 接口不可用时临时回退旧 token 握手。
       if (state.token === token) openStream(kind, handler, refreshOnOpen, isRestore, '')
     })
@@ -1002,6 +1071,7 @@ function openStream(kind, handler, refreshOnOpen, isRestore, ticket = null) {
     })
     meta.failures++
     aggregateStreamFailures()
+    if (state.authFailed) { updateConn(); return }
     updateConn()
     if (!navigator.onLine) { clearReconnect(); return }
     // 任一通道连续失败 3 次就降级轮询；另一个通道不会清零它的失败计数。
@@ -1023,7 +1093,7 @@ function openStream(kind, handler, refreshOnOpen, isRestore, ticket = null) {
 
 /* ---------------- 轮询降级模式 ---------------- */
 function enterPollMode() {
-  if (state.streamMode === 'poll') return
+  if (state.authFailed || state.streamMode === 'poll') return
   state.streamMode = 'poll'
   state.pollSeq = { mux: 0, host: 0 }
   state.streamsOk = { mux: false, host: false }
@@ -1050,7 +1120,7 @@ function startPolling() {
 
 let pollInFlight = false
 async function pollOnce() {
-  if (state.streamMode !== 'poll' || pollInFlight) return
+  if (state.streamMode !== 'poll' || state.authFailed || pollInFlight) return
   pollInFlight = true
   try {
     await Promise.all([pollKind('mux'), pollKind('host')])
@@ -1060,7 +1130,7 @@ async function pollOnce() {
 }
 
 async function pollKind(kind) {
-  if (state.streamMode !== 'poll') return
+  if (state.streamMode !== 'poll' || state.authFailed) return
   const since = state.pollSeq[kind] || 0
   let res
   try {
@@ -1068,7 +1138,7 @@ async function pollKind(kind) {
     const headers = { authorization: 'Bearer ' + state.token, 'x-dsh-remote-client': 'web' }
     res = signal ? await fetch(apiUrl(`/api/events.poll?kind=${kind}&since=${since}`), { signal, headers }) : await fetch(apiUrl(`/api/events.poll?kind=${kind}&since=${since}`), { headers })
   } catch { return }
-  if (res.status === 401) { toast(t('ds.toastAuth'), 'err'); return }
+  if (res.status === 401) { authFail(); return }
   if (!res.ok) return
   let data
   try { data = await res.json() } catch { return }
@@ -1089,7 +1159,7 @@ async function pollKind(kind) {
 }
 
 function tryRestoreWs() {
-  if (state.streamMode !== 'poll' || !state.token) return
+  if (state.streamMode !== 'poll' || !state.token || state.authFailed) return
   // 轮询继续跑，等 WS 真正 onopen 后再切回，避免重连窗口丢事件
   if (!streams.mux && !streamMeta.mux.retryTimer) openStream('mux', onMuxFrame, true, true)
   if (!streams.host && !streamMeta.host.retryTimer) openStream('host', onHostFrame, false, true)
@@ -1104,14 +1174,14 @@ window.addEventListener('offline', () => {
   updateConn()
 })
 window.addEventListener('online', () => {
-  if (!state.token) { updateConn(); return }
+  if (!state.token || state.authFailed) { updateConn(); return }
   state.errCount = 0
   clearReconnect()
   openStreams()
   updateConn()
 })
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && state.token &&
+  if (document.visibilityState === 'visible' && state.token && !state.authFailed &&
       (streams.mux?.readyState !== WebSocket.OPEN || streams.host?.readyState !== WebSocket.OPEN)) {
     openStreams()
   }
@@ -1296,7 +1366,7 @@ async function loadHistory() {
   try { v = await rpc('session.history', { sessionId: id, maxMessages: 60 }) }
   catch (e) {
     state.history.loading = false
-    if (e.message === 'AUTH') return
+    if (e.message === 'AUTH') { authFail(); return }
     $('history').innerHTML = `<div class="ds-empty">${e.message}</div>`
     return
   }
@@ -1481,7 +1551,7 @@ async function runSlashCommand(text) {
       body: JSON.stringify({ sessionId: state.current, line: clean }),
       ...(signal ? { signal } : {})
     })
-    if (res.status === 401) { toast(t('ds.toastAuth'), 'err'); return true }
+    if (res.status === 401) { authFail(); return true }
     if (!res.ok) return false
     const data = await res.json().catch(() => null)
     if (data?.ok === false) return true
@@ -1560,7 +1630,7 @@ async function approveApproval(id, allow) {
   try {
     ok = await respond(a.rpcId, { sessionId: a.sessionId, approvalId: a.approvalId, outcome: allow ? 'allowed-once' : 'rejected' })
   } catch (e) {
-    if (e.message === 'AUTH') toast(t('ds.toastAuth'), 'err')
+    if (e.message === 'AUTH') authFail()
     else toast(t('ds.pendingSubmitFailed', { msg: e.message || t('ds.feedbackNetworkError') }), 'err')
     return
   }
@@ -1596,7 +1666,7 @@ async function submitQuestion() {
   try {
     ok = await respond(q.rpcId, { sessionId: q.sessionId, answer: { answers } })
   } catch (e) {
-    if (e.message === 'AUTH') toast(t('ds.toastAuth'), 'err')
+    if (e.message === 'AUTH') authFail()
     else toast(t('ds.pendingSubmitFailed', { msg: e.message || t('ds.feedbackNetworkError') }), 'err')
     return
   }
@@ -1644,7 +1714,7 @@ async function createWorkspace() {
   button.disabled = true
   try {
     const res = await fetch(fsApiUrl('/mkdir', { path: parent, name }), { method: 'POST', headers: fsHeaders() })
-    if (res.status === 401) { toast(t('ds.toastAuth'), 'err'); return }
+    if (res.status === 401) { authFail(); return }
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
       const msg = data.error === 'exists' ? t('ds.workspaceExists') : data.error === 'bad-name' ? t('ds.workspaceInvalidName') : data.error || ('HTTP ' + res.status)
@@ -1680,7 +1750,7 @@ async function loadFs(dir, silent) {
   }
   try {
     const res = await fetch(fsApiUrl('/list', target ? { path: target } : {}), { headers: fsHeaders() })
-    if (res.status === 401) { toast(t('ds.toastAuth'), 'err'); return }
+    if (res.status === 401) { authFail(); return }
     const data = await res.json().catch(() => ({}))
     if (!res.ok || !Array.isArray(data.entries)) throw new Error(data.error || ('HTTP ' + res.status))
     state.fs.path = data.path
@@ -1763,7 +1833,7 @@ async function refreshWorkbench({ silent = false } = {}) {
     wb = await wbGateway('GET', '/workbench')
     state.wb.apiMissing = false
   } catch (e) {
-    if (e.message === 'AUTH') { toast(t('ds.toastAuth'), 'err'); return }
+    if (e.message === 'AUTH') { authFail(); return }
     if (!silent) toast(t('wb.loadFailed', { msg: e.message }), 'err')
     if (!state.wb.bound && /404/.test(e.message)) state.wb.apiMissing = true
   }
@@ -1920,7 +1990,7 @@ async function bindWorkbench(rawPath) {
     await refreshSessions()
     toast(t('wb.boundOk', { path: state.wb.path }), 'ok')
   } catch (e) {
-    if (e.message === 'AUTH') return toast(t('ds.toastAuth'), 'err')
+    if (e.message === 'AUTH') return authFail()
     toast(t('wb.bindFailed', { msg: e.message }), 'err')
   }
 }
@@ -1933,7 +2003,7 @@ async function unbindWorkbench() {
     renderSessions()
     toast(t('wb.unboundOk'), 'ok')
   } catch (e) {
-    if (e.message === 'AUTH') return toast(t('ds.toastAuth'), 'err')
+    if (e.message === 'AUTH') return authFail()
     toast(t('wb.unbindFailed', { msg: e.message }), 'err')
   }
 }
@@ -2007,12 +2077,47 @@ function renderStats(days) {
 }
 
 /* ---------------- 视图与连接状态 ---------------- */
+function healthBase() { return (state.server || location.origin || '').replace(/\/+$/, '') }
+let healthProbeSeq = 0
+let healthProbeInFlight = false
+async function probeGatewayHealth() {
+  if (healthProbeInFlight || !state.token || state.authFailed) return
+  const base = healthBase()
+  if (!base) return
+  healthProbeInFlight = true
+  const seq = ++healthProbeSeq
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 4000)
+  let gh
+  try {
+    const res = await fetch(base + '/health?t=' + Date.now(), { signal: ctrl.signal, cache: 'no-store' })
+    const j = res.ok ? await res.json().catch(() => null) : null
+    gh = { ok: !!(j && j.ok), upstreamOk: !!(j && j.upstreamOk), upstreamStatus: j?.upstreamStatus || 0, version: j?.version || '', base, at: Date.now() }
+  } catch {
+    gh = { ok: false, upstreamOk: false, upstreamStatus: 0, version: '', base, at: Date.now() }
+  } finally {
+    clearTimeout(timer)
+    healthProbeInFlight = false
+  }
+  if (seq !== healthProbeSeq) return
+  state.gatewayHealth = gh
+  renderOverviewDesktop()
+}
+function maybeProbeHealth() {
+  if (!state.token || state.authFailed) return
+  const base = healthBase()
+  const gh = state.gatewayHealth
+  // 节流: 只在无缓存/换服务器/缓存超 20s 时补探测, 不随渲染频率打请求
+  if (!gh || gh.base !== base || Date.now() - gh.at > 20000) probeGatewayHealth()
+}
+
 function renderOverviewDesktop() {
   const ring = $('ds-overview-pulse-ring')
   if (!ring) return
+  const gh = state.gatewayHealth && state.gatewayHealth.base === healthBase() ? state.gatewayHealth : null
   const checks = {
-    gateway: !!state.token && !!state.server,
-    dsh: !!state.hostInfo,
+    gateway: !!(gh && gh.ok),          // 真实 /health 探测, 不再只查 token/server 存在性
+    dsh: !!(gh && gh.upstreamOk),      // DSH 上游由 /health 的 upstream 字段派生
     mux: !!state.streamsOk?.mux,
     host: !!state.streamsOk?.host
   }
@@ -2081,7 +2186,7 @@ function renderOverviewDesktop() {
     primary.dataset.dsOverviewSession = sessionId
   }
   $('ds-overview-dsh-version').textContent = state.hostInfo?.version || '—'
-  $('ds-overview-gateway-version').textContent = checks.gateway ? t('ds.online') : t('ds.offlineShort')
+  $('ds-overview-gateway-version').textContent = gh && gh.ok ? (gh.version || t('ds.online')) : t('ds.offlineShort')
   $('ds-overview-active-sessions').textContent = String(running)
   $('ds-overview-connection-mode').textContent = state.token ? t(state.streamMode === 'poll' ? 'ds.poll' : 'ds.liveWs') : '—'
   $('ds-overview-active-count').textContent = running ? t('ds.activeCount', { n: running }) : ''
@@ -2089,6 +2194,7 @@ function renderOverviewDesktop() {
     <span class="ds-overview-mark">${s.running ? '●' : '○'}</span><span class="ds-overview-copy"><span class="ds-overview-item-title">${esc(titleOf(s))}</span><span class="ds-overview-item-desc">${s.running ? esc(t('ds.running')) + ' · ' : ''}${esc(fmtTime(s.updatedAt))}</span></span><span class="ds-overview-arrow">›</span>
   </button>`).join('') : `<div class="ds-overview-empty">${t('ds.noSessions')}</div>`
   $('ds-overview-session-list').querySelectorAll('[data-ds-overview-session]').forEach(btn => btn.addEventListener('click', () => openSession(btn.dataset.dsOverviewSession)))
+  maybeProbeHealth()
 }
 
 function showView(id) {
@@ -2350,6 +2456,9 @@ function bindUi() {
   $('fs-refresh').addEventListener('click', () => loadFs(state.fs.path || null))
   $('btn-question-submit').addEventListener('click', submitQuestion)
   $('btn-question-cancel').addEventListener('click', () => { $('modal-question').classList.add('hidden'); toast(t('ds.ignored'), 'ok') })
+  // 令牌失效横幅: 重新输入令牌
+  const reenterBtn = $('btn-auth-reenter')
+  if (reenterBtn) reenterBtn.addEventListener('click', () => { authBanner(false); promptForToken() })
 }
 
 async function start() {
@@ -2374,6 +2483,7 @@ async function start() {
     const host = await safeRpc('host.describe', {}, '')
     if (host) state.hostInfo = host
     refreshWorkbench({ silent: true })
+    probeGatewayHealth()
   }
   renderOverviewDesktop()
 }

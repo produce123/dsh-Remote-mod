@@ -718,7 +718,7 @@
         'session.confirmStop': '停止当前会话正在运行的任务？', 'session.stopFailed': '停止失败', 'session.stopRequested': '已请求停止', 'session.archive': '归档', 'session.archiveConfirm': '归档这个会话？归档后可在“显示已归档会话”中打开。', 'session.archiveFailed': '归档失败：{msg}', 'session.archived': '会话已归档', 'session.archiveTitle': '确认归档会话', 'session.archiveDesc': '归档后会话将从普通列表隐藏，但不会删除对话记录。', 'session.archiveConversation': '对话', 'session.archiveWorkspace': '工作区', 'session.archiveCancel': '取消', 'session.archiveConfirmAction': '确认归档',
         'notify.approvalTitle': '工具审批', 'notify.approvalBody': '{tool} 需要批准', 'notify.questionTitle': 'DSH 提问', 'notify.questionBody': '需要你回答',
         'notify.permissionFailed': '通知权限申请失败：{msg}',
-        'history.loading': '加载历史…', 'history.cacheFallback': '网络不可用：显示本地缓存的历史', 'history.loadFailed': '加载历史失败：{msg}', 'history.retry': '重试',
+        'history.loading': '加载历史…', 'history.loadingLarge': '会话较大，继续加载中…', 'history.cacheFallback': '网络不可用：显示本地缓存的历史', 'history.loadFailed': '加载历史失败：{msg}', 'history.retry': '重试',
         'history.offlineCache': '离线缓存 {n} 条', 'history.count': '{n} 条', 'history.empty': '还没有消息',
         'history.queueAndCount': '队列 {q} · 历史 {n}', 'history.countOnly': '历史 {n}',
         'role.me': '我', 'role.dsh': 'DSH',
@@ -915,7 +915,7 @@
         'session.confirmStop': 'Stop the currently running task in this session?', 'session.stopFailed': 'Stop failed', 'session.stopRequested': 'Stop requested', 'session.archive': 'Archive', 'session.archiveConfirm': 'Archive this session? You can open it from “Show archived”.', 'session.archiveFailed': 'Archive failed: {msg}', 'session.archived': 'Session archived', 'session.archiveTitle': 'Confirm archive', 'session.archiveDesc': 'The session will be hidden from the normal list, but its conversation will not be deleted.', 'session.archiveConversation': 'Conversation', 'session.archiveWorkspace': 'Workspace', 'session.archiveCancel': 'Cancel', 'session.archiveConfirmAction': 'Archive session',
         'notify.approvalTitle': 'Tool approval', 'notify.approvalBody': '{tool} needs approval', 'notify.questionTitle': 'DSH question', 'notify.questionBody': 'Needs your answer',
         'notify.permissionFailed': 'Notification permission failed: {msg}',
-        'history.loading': 'Loading history…', 'history.cacheFallback': 'Network unavailable: showing cached history', 'history.loadFailed': 'Failed to load history: {msg}', 'history.retry': 'Retry',
+        'history.loading': 'Loading history…', 'history.loadingLarge': 'Large session, still loading…', 'history.cacheFallback': 'Network unavailable: showing cached history', 'history.loadFailed': 'Failed to load history: {msg}', 'history.retry': 'Retry',
         'history.offlineCache': 'Offline cache {n} items', 'history.count': '{n} items', 'history.empty': 'No messages yet',
         'history.queueAndCount': 'Queue {q} · History {n}', 'history.countOnly': 'History {n}',
         'role.me': 'Me', 'role.dsh': 'DSH',
@@ -1058,6 +1058,7 @@
   <script src="i18n.js"></script>
   <script src="theme.js"></script>
   <script src="md.js"></script>
+  <script src="history-core.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

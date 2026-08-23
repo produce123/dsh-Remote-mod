@@ -1,7 +1,9 @@
 node_modules/
 .codex/
+.agent-teams/
 token
-apk/
+apk/*
+!apk/dsh-remote.apk
 !packages/plugin/apk/
 !packages/plugin/apk/dsh-remote.apk
 dist/
@@ -13,4 +15,3 @@ android/build/
 .gradle-home/
 .npm-cache/
 SHA256SUMS-rc.txt
-packages/plugin/*.tgz

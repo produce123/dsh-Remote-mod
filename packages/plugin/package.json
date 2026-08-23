@@ -1,7 +1,7 @@
 {
-  "name": "dsh-remote-plugin",
-  "version": "0.6.10-rc.1",
-  "description": "DSH Remote 官方 bundle 插件：DSH 左侧原生边栏入口 + 右侧抽屉内嵌管理控制台；内置网关随 DSH 自动启停(systemd 独立单元)，抽屉直显令牌与设备监控；网关提供 /fs/* 文件传输端点(列表/断点下载/上传)，配合 Android App 远程操控会话/审批/提问/goal 与文件互传(多服务器测速切换、聊天记录离线缓存)。",
+  "name": "dsh-remote-mod-plugin",
+  "version": "0.6.9-mod",
+  "description": "DSH Remote mod 分支修复版 bundle 插件（独立于上游 dsh-remote-plugin）：DSH 左侧原生边栏入口 + 右侧抽屉内嵌管理控制台；内置网关随 DSH 自动启停(systemd 独立单元)，抽屉直显令牌与设备监控；网关提供 /fs/* 文件传输端点(列表/断点下载/上传)，配合 Android App 远程操控会话/审批/提问/goal 与文件互传(多服务器测速切换、聊天记录离线缓存)。",
   "type": "module",
   "main": "./index.mjs",
   "exports": {
@@ -29,14 +29,14 @@
     "mobile"
   ],
   "license": "MIT",
-  "homepage": "https://github.com/Blank-not-black/dsh-Remote",
+  "homepage": "https://github.com/produce123/dsh-Remote-mod",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Blank-not-black/dsh-Remote.git",
+    "url": "git+https://github.com/produce123/dsh-Remote-mod.git",
     "directory": "packages/plugin"
   },
   "bugs": {
-    "url": "https://github.com/Blank-not-black/dsh-Remote/issues"
+    "url": "https://github.com/produce123/dsh-Remote-mod/issues"
   },
   "publishConfig": {
     "access": "public"

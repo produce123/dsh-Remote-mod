@@ -1,10 +1,14 @@
 {
-  "version": "0.6.10-rc.1",
+  "version": "0.6.9-mod",
   "apkUrl": "dsh-remote.apk",
-  "sha256": "71609dc39dd38e0a7a5114d91c312b45bb6c7af30258b9d9a99959d8e6f67d4b",
-  "releasedAt": "2026-08-22T05:55:44.018Z",
-  "notes": "0.6.10-rc.1：修复公网用户提交反馈失败；反馈收集器默认改用公网 HTTPS 入口，保留 DSH_REMOTE_FEEDBACK_URL 覆盖能力；同步修正云端 Nginx 反向代理链路。",
+  "sha256": "a11ee73cae7b9c849262db66d5f66ec5c177b06b2ea2cb3effe821fc9dd0cbb2",
+  "releasedAt": "2026-08-23T06:38:46.601Z",
+  "notes": "0.6.9-mod：基于上游 0.6.10-rc.1 的 mod 修复版。修复 6 项：①管理界面双入口统一（/remote/admin 302 到网关源，pluginMode 死代码删除）；②手机端超大旧会话历史加载超时放宽至 180s 并自动重试；③管理页设备列表按 IP 聚合（同设备多行合并、排除管理页自身）；④手机端会话页输入框贴底；⑤桌面端「网关异常」误报改为真实 /health 探测；⑥令牌轮换后 401 刷屏收敛为单次提示，插件源下自动续牌。另含全仓审计优化（净删约 110 行）+ 插件更名 dsh-remote-mod-plugin（注册名 dsh-remote-mod），与原版插件互不冲突。",
   "history": [
+    {
+      "version": "0.6.9-mod",
+      "notes": "0.6.9-mod：基于上游 0.6.10-rc.1 的 mod 修复版。修复 6 项：①管理界面双入口统一（/remote/admin 302 到网关源，pluginMode 死代码删除）；②手机端超大旧会话历史加载超时放宽至 180s 并自动重试；③管理页设备列表按 IP 聚合（同设备多行合并、排除管理页自身）；④手机端会话页输入框贴底；⑤桌面端「网关异常」误报改为真实 /health 探测；⑥令牌轮换后 401 刷屏收敛为单次提示，插件源下自动续牌。另含全仓审计优化（净删约 110 行）+ 插件更名 dsh-remote-mod-plugin（注册名 dsh-remote-mod），与原版插件互不冲突。"
+    },
     {
       "version": "0.6.9",
       "notes": "0.6.9 正式版：全面优化网络连接稳定性，重构网关实时链路与连接管理；修复 downlink-only 心跳断联、网关重启风暴和 WebSocket 状态竞态；新增 VPN 友好 Ping/Pong、集中 mux/host collector、短时 WebSocket ticket、CORS 收紧与统计旁路优化。"

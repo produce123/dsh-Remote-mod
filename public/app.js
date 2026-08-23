@@ -1505,6 +1505,7 @@ function updateCancelBtn() {
 }
 
 const HISTORY_MAX_VISIBLE = 5000  // 已加载的可显示事件上限(消息/工具/状态, 不含 chunk)
+const HISTORY_TIMEOUT = 180000  // 历史冷重放专用超时(旧会话冷读耗时与 O(全量) 成正比, 默认 45s 不够)
 
 function emptyHistory() {
   return {
@@ -1513,13 +1514,16 @@ function emptyHistory() {
   }
 }
 
-function trimVisible() {
+/* HistoryCore.append 已执行裁剪; 这里按裁掉条数同步渲染窗口游标 */
+function trimVisible(dropped) {
   const h = state.history
-  if (h.visible.length <= HISTORY_MAX_VISIBLE) return
-  const drop = h.visible.splice(0, h.visible.length - HISTORY_MAX_VISIBLE)
-  for (const e of drop) h.seqs.delete(e.seq)
-  h.renderStart = Math.max(0, h.renderStart - drop.length)
-  h.renderEnd = Math.max(h.renderStart, h.renderEnd - drop.length)
+  if (!dropped) return
+  h.renderStart = Math.max(0, h.renderStart - dropped)
+  h.renderEnd = Math.max(h.renderStart, h.renderEnd - dropped)
+}
+
+function isAbortError(e) {
+  return typeof DOMException !== 'undefined' && e instanceof DOMException && e.name === 'AbortError'
 }
 
 /* 聊天记录本地缓存: 每会话最多 250 条, 全局最多 10 个会话 */
@@ -1577,10 +1581,17 @@ async function loadHistory(reset) {
 
   let v
   try {
-    v = await rpc('session.history', payload)
+    v = await rpc('session.history', payload, HISTORY_TIMEOUT)
   } catch (e) {
     state.history.loading = false
     if (e.message === 'AUTH') { authFailure(); return }
+    if (isAbortError(e) && !loadHistory._retried) {
+      // 超大旧会话冷重放超时: 提示 + 自动重试一次(总预算 2×HISTORY_TIMEOUT), 仍失败走原错误分支
+      loadHistory._retried = true
+      toast(t('history.loadingLarge'), 'warn')
+      return loadHistory(reset)
+    }
+    loadHistory._retried = false
     if (restoreCachedHistory()) {
       toast(t('history.cacheFallback'), 'ok')
       return
@@ -1598,26 +1609,17 @@ async function loadHistory(reset) {
   }
 
   const incoming = v.events || []
-  let added = 0
-  for (const entry of incoming) {
-    const ev = entry?.event
-    const seq = ev?.seq
-    if (seq == null || state.history.seqs.has(seq)) continue
-    if (!shouldShowEvent(ev.type)) continue          // chunk 等内部事件不保留
-    state.history.seqs.add(seq)
-    state.history.visible.push({ seq, event: ev, view: entry.view })
-    added++
-  }
+  const r = HistoryCore.append(state.history.seqs, state.history.visible, incoming, HISTORY_MAX_VISIBLE, ev => shouldShowEvent(ev?.type))
   // 向前翻页游标 = 本页最旧的 raw seq(即使它本身被过滤)
   const firstSeq = incoming[0]?.event?.seq
   if (firstSeq != null) state.history.minSeq = Math.min(state.history.minSeq, firstSeq)
-  state.history.visible.sort((a, b) => a.seq - b.seq)
-  trimVisible()
+  trimVisible(r.dropped)
   state.history.hasMore = !!v.hasMore
   state.history.loading = false
+  loadHistory._retried = false
   try {
     if (reset) renderHistory(true)
-    else if (added) renderHistory(false, 'keep')
+    else if (r.added) renderHistory(false, 'keep')
   } catch (e) {
     console.error('renderHistory failed', e)
   }
@@ -1628,12 +1630,9 @@ async function loadHistory(reset) {
 
 function insertLiveEvent(event) {
   const h = state.history
-  const seq = event?.seq
-  if (seq == null || h.seqs.has(seq) || !shouldShowEvent(event.type)) return
-  h.seqs.add(seq)
-  h.visible.push({ seq, event })
-  h.visible.sort((a, b) => a.seq - b.seq)
-  trimVisible()
+  const r = HistoryCore.append(h.seqs, h.visible, [{ event }], HISTORY_MAX_VISIBLE, ev => shouldShowEvent(ev?.type))
+  if (!r.added) return
+  trimVisible(r.dropped)
   const box = $('history')
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 240
   if (nearBottom) {

@@ -1,16 +1,18 @@
-# dsh-remote-plugin
+# dsh-remote-mod-plugin
 
-The official DSH bundle plugin for DSH Remote. It adds a DSH sidebar entry, a compact status panel, a full admin console, and a gateway managed alongside DSH.
+The mod-branch fixed bundle plugin for DSH Remote (independent of the upstream `dsh-remote-plugin`). It adds a DSH sidebar entry, a compact status panel, a full admin console, and a gateway managed alongside DSH.
 
 [English](README.en.md) · [中文](README.md)
 
 ## Install
 
 ```sh
-dsh plugin --profile web add dsh-remote-plugin
+dsh plugin --profile web add dsh-remote-mod-plugin
 
-# Optional version pin
-dsh plugin --profile web add dsh-remote-plugin@0.6.8
+# Optional version pin (requires npm publish rights; this fork ships a tgz in Releases)
+dsh plugin --profile web add dsh-remote-mod-plugin@0.6.9-mod
+# or from a local tarball:
+# dsh plugin --profile web add /abs/path/dsh-remote-mod-plugin-0.6.9-mod.tgz
 ```
 
 Restart DSH Web and refresh the browser. The DSH Remote entry will appear in the sidebar.
@@ -45,8 +47,9 @@ The token grants remote control of DSH. Keep it private. For cross-network acces
 
 - Admin page: `http://<gateway-ip>:8787/admin`
 - Desktop WebUI: `http://<gateway-ip>:8787`
-- Main project: [dsh-Remote](https://github.com/Blank-not-black/dsh-Remote)
-- Stable releases: [GitHub Releases](https://github.com/Blank-not-black/dsh-Remote/releases/latest)
+- Main project (upstream): [dsh-Remote](https://github.com/Blank-not-black/dsh-Remote)
+- This fork (mod): [dsh-Remote-mod](https://github.com/produce123/dsh-Remote-mod)
+- Stable releases: [GitHub Releases](https://github.com/produce123/dsh-Remote-mod/releases/latest)
 
 ## License
 

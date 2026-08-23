@@ -1,6 +1,6 @@
 {
   "name": "dsh-remote",
-  "version": "0.6.10-rc.1",
+  "version": "0.6.9-mod",
   "private": true,
   "dsh": {
     "bundle": {
@@ -15,7 +15,7 @@
     }
   },
   "description": "DSH 移动远程控制台: DSH 插件(内置网关自启停) + 独立网关 + Android App 一体",
-  "updateNotes": "0.6.10-rc.1：修复公网用户提交反馈失败；反馈收集器默认改用公网 HTTPS 入口，保留 DSH_REMOTE_FEEDBACK_URL 覆盖能力；同步修正云端 Nginx 反向代理链路。",
+  "updateNotes": "0.6.9-mod：基于上游 0.6.10-rc.1 的 mod 修复版。修复 6 项：①管理界面双入口统一（/remote/admin 302 到网关源，pluginMode 死代码删除）；②手机端超大旧会话历史加载超时放宽至 180s 并自动重试；③管理页设备列表按 IP 聚合（同设备多行合并、排除管理页自身）；④手机端会话页输入框贴底；⑤桌面端「网关异常」误报改为真实 /health 探测；⑥令牌轮换后 401 刷屏收敛为单次提示，插件源下自动续牌。另含全仓审计优化（净删约 110 行）+ 插件更名 dsh-remote-mod-plugin（注册名 dsh-remote-mod），与原版插件互不冲突。",
   "bin": "gateway.js",
   "pkg": {
     "assets": [
@@ -30,7 +30,7 @@
   },
   "scripts": {
     "start": "node gateway.js",
-    "check": "node --check gateway.js && node --check gateway-stats.cjs && node --check packages/plugin/index.mjs && node --check public/app.js && node --check public/admin.js && node --check public/i18n.js && node --check public/theme.js && node --check public/sha256.js && node --check public/md.js && node --check public/desktop/desktop.js && node --check public/desktop/i18n.js && node --test tests/stats.test.js tests/gateway.test.js tests/md.test.js tests/network-regression.test.js",
+    "check": "node --check gateway.js && node --check gateway-stats.cjs && node --check packages/plugin/index.mjs && node --check public/app.js && node --check public/admin.js && node --check public/i18n.js && node --check public/theme.js && node --check public/sha256.js && node --check public/md.js && node --check public/history-core.js && node --check public/desktop/desktop.js && node --check public/desktop/i18n.js && node --test tests/stats.test.js tests/gateway.test.js tests/md.test.js tests/network-regression.test.js tests/history.test.js",
     "test-stats": "node --test tests/stats.test.js",
     "sync-app": "npx cap sync android",
     "build-app": "node scripts/prepare-version.mjs && npx cap sync android && cd android && ./gradlew assembleDebug",

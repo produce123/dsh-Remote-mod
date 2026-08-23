@@ -11,7 +11,7 @@ let usageLoadedAt = 0
 function text(id, value) { const el = $(id); if (el) el.textContent = value == null ? '—' : String(value) }
 function escapeText(value) { return String(value ?? '').replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c])) }
 function openConsole() { window.open('/remote/admin/', '_blank', 'noopener') }
-function closePanel() { window.parent.postMessage({ source: 'dsh-remote-plugin', type: 'close' }, location.origin) }
+function closePanel() { window.parent.postMessage({ source: 'dsh-remote-mod-plugin', type: 'close' }, location.origin) }
 function fmtTokens(value) {
   const n = Number(value) || 0
   if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M'

@@ -13,7 +13,7 @@ import { homedir, hostname, networkInterfaces } from 'node:os'
 import { dirname, extname, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const name = 'dsh-remote'
+export const name = 'dsh-remote-mod'
 export const inject = ['webServer', 'commands', 'agents']
 
 const MOUNT = '/remote'
@@ -484,7 +484,7 @@ async function resolveFile(pathname) {
   }
 }
 
-async function serveStatic(req, res, ctx) {
+export async function serveStatic(req, res, ctx) {
   const pathname = new URL(req.url ?? '/', 'http://x').pathname
 
   // 无尾斜杠的入口重定向到带斜杠版本:
@@ -495,8 +495,17 @@ async function serveStatic(req, res, ctx) {
     res.end()
     return
   }
-  if (pathname === `${MOUNT}/admin`) {
-    res.writeHead(302, { location: `${MOUNT}/admin/` })
+  // 管理入口统一到网关: /remote/admin 系列一律 302 到本地网关 /admin(带令牌)——
+  // 插件侧不再渲染 admin.html, 避免双入口/双 token 账本; 地址按
+  // DSH_REMOTE_GATEWAY > DSH_REMOTE_GATEWAY_PORT > gateway-port 文件 > 8787 解析,
+  // 其它 query(如 ?embedded=1)原样透传。admin/api 代理端点不受影响。
+  if (pathname === `${MOUNT}/admin` || pathname === `${MOUNT}/admin/` ||
+      pathname === `${MOUNT}/admin.html` || pathname === `${MOUNT}/admin/index.html`) {
+    const params = new URLSearchParams(new URL(req.url ?? '/', 'http://x').search)
+    const token = gatewayToken()
+    if (token) params.set('token', token)
+    const qs = params.toString()
+    res.writeHead(302, { location: `${gatewayBase()}/admin${qs ? '?' + qs : ''}` })
     res.end()
     return
   }

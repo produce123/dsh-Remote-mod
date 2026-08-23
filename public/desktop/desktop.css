@@ -159,6 +159,9 @@ a.ds-btn { text-decoration: none; }
 .ds-conn { font-size: 11px; color: var(--dsr-muted); }
 .ds-conn.on { color: var(--dsr-success); }
 .ds-conn.ing { color: var(--dsr-warning); }
+.ds-auth-banner { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 20px; font-size: 12px; color: var(--dsr-warning); background: var(--dsr-warning-soft); border-bottom: 1px solid var(--dsr-warning-line); }
+.ds-auth-banner.hidden { display: none; }
+.ds-auth-banner .ds-btn { flex: none; margin: 0; }
 .ds-server { font-size: 12px; color: var(--dsr-muted); max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .ds-content { flex: 1; min-height: 0; display: flex; }

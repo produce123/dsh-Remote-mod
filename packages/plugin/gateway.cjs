@@ -313,23 +313,34 @@ function touchDevice(req, extra = {}) {
 }
 
 function deviceViews() {
-  return [...devices.values()]
-    .map(d => ({
-      ip: d.ip,
-      id: d.id,
-      clientId: d.clientId || '',
-      note: deviceNotes[d.ip] || '',
-      kind: d.kind,
-      ua: d.ua,
-      firstSeen: d.firstSeen,
-      lastSeen: d.lastSeen,
-      requests: d.requests,
-      authFailures: d.authFailures,
-      channels: { ...d.channels },
-      channelCounts: { ...d.channelCounts },
-      online: Date.now() - d.lastSeen < 60_000
-    }))
-    .sort((a, b) => b.lastSeen - a.lastSeen)
+  // 同一台物理设备(同 IP)会因 HTTP 行(key=ip)与 WS 行(key=ip|clientId)产生多条内部
+  // 记录——内部 Map 保留区分以管理通道/连接, 输出层按 IP 聚合成一行; kind=admin 的
+  // 管理页自身不计入已连接设备。kickDevice/deviceNotes 仍按 ip 操作, 不受影响。
+  const KIND_PRIORITY = { app: 3, web: 2, browser: 1 }
+  const byIp = new Map()
+  for (const d of devices.values()) {
+    if (d.kind === 'admin') continue
+    let agg = byIp.get(d.ip)
+    if (!agg) {
+      agg = {
+        ip: d.ip, id: d.ip, clientId: '', kind: '', note: deviceNotes[d.ip] || '', ua: '',
+        firstSeen: d.firstSeen, lastSeen: d.lastSeen, requests: 0, authFailures: 0,
+        channels: {}, channelCounts: {}, online: false
+      }
+      byIp.set(d.ip, agg)
+    }
+    agg.lastSeen = Math.max(agg.lastSeen, d.lastSeen)
+    agg.firstSeen = Math.min(agg.firstSeen, d.firstSeen)
+    agg.requests += d.requests
+    agg.authFailures += d.authFailures
+    if (!agg.clientId && d.clientId) agg.clientId = d.clientId
+    if ((KIND_PRIORITY[d.kind] || 0) > (KIND_PRIORITY[agg.kind] || 0)) agg.kind = d.kind
+    if (d.ua.length > agg.ua.length) agg.ua = d.ua
+    for (const [ch, v] of Object.entries(d.channels)) agg.channels[ch] = agg.channels[ch] || v
+    for (const [ch, n] of Object.entries(d.channelCounts)) agg.channelCounts[ch] = (agg.channelCounts[ch] || 0) + n
+    if (d.sockets.size > 0 || Date.now() - d.lastSeen < 60_000) agg.online = true
+  }
+  return [...byIp.values()].sort((a, b) => b.lastSeen - a.lastSeen)
 }
 
 function kickDevice(ip) {
@@ -1175,6 +1186,7 @@ function serveAdminApi(req, res, url) {
       return
     }
     upstreamReachable((reachable) => {
+      const views = deviceViews()
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
       res.end(JSON.stringify({
         ok: true,
@@ -1202,9 +1214,9 @@ function serveAdminApi(req, res, url) {
         tokenLength: TOKEN.length,
         totalRequests,
         authFailures,
-        deviceCount: devices.size,
-        onlineCount: [...devices.values()].filter(d => Date.now() - d.lastSeen < 60_000).length,
-        devices: deviceViews()
+        deviceCount: views.length,
+        onlineCount: views.filter(d => d.online).length,
+        devices: views
       }))
     })
     return

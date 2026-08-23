@@ -4,7 +4,7 @@
  * 产物入库, 无构建步骤; 参考 @openbiliclaw/dsh-plugin 的官方 slot 注册模式。
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-remote-plugin',
+  id: 'dsh-remote-mod-plugin',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports
@@ -75,7 +75,7 @@ window.__ModuleLoader__.load({
         function onMsg(e) {
           if (e.origin !== location.origin) return
           var d = e.data
-          if (d && (d.source === 'dsh-remote-admin' || d.source === 'dsh-remote-plugin') && d.type === 'close') props.actions.close()
+          if (d && (d.source === 'dsh-remote-admin' || d.source === 'dsh-remote-mod-plugin') && d.type === 'close') props.actions.close()
         }
         window.addEventListener('message', onMsg)
         return function () { window.removeEventListener('message', onMsg) }

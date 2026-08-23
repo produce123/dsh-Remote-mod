@@ -1,16 +1,18 @@
-# dsh-remote-plugin
+# dsh-remote-mod-plugin
 
-DSH Remote 的官方 bundle 插件：在 DSH 侧边栏提供入口，打开快速状态面板和完整管理控制台，并内置随 DSH 自动启停的远程网关。
+DSH Remote mod 分支修复版 bundle 插件（独立于上游 dsh-remote-plugin）：在 DSH 侧边栏提供入口，打开快速状态面板和完整管理控制台，并内置随 DSH 自动启停的远程网关。
 
 **中文** · [English](README.en.md)
 
 ## 安装
 
 ```sh
-dsh plugin --profile web add dsh-remote-plugin
+dsh plugin --profile web add dsh-remote-mod-plugin
 
-# 也可以安装指定版本
-dsh plugin --profile web add dsh-remote-plugin@0.6.8
+# 也可以安装指定版本（需要 npm 发布权限；本仓库 Releases 附带 tgz 可用本地路径安装）
+dsh plugin --profile web add dsh-remote-mod-plugin@0.6.9-mod
+# 或本地 tgz：
+# dsh plugin --profile web add /绝对路径/dsh-remote-mod-plugin-0.6.9-mod.tgz
 ```
 
 重启 DSH Web 后刷新浏览器，左侧边栏会出现 DSH Remote 入口。
@@ -45,8 +47,9 @@ Android 应用 / 手机 WebUI 采用五个主要页面：会话、文件、主�
 
 - 管理页：`http://<网关IP>:8787/admin`
 - 桌面 WebUI：`http://<网关IP>:8787`
-- 主项目：[dsh-Remote](https://github.com/Blank-not-black/dsh-Remote)
-- 正式版本：[GitHub Releases](https://github.com/Blank-not-black/dsh-Remote/releases/latest)
+- 主项目（上游）：[dsh-Remote](https://github.com/Blank-not-black/dsh-Remote)
+- 本 fork（mod）：[dsh-Remote-mod](https://github.com/produce123/dsh-Remote-mod)
+- 正式版本：[GitHub Releases](https://github.com/produce123/dsh-Remote-mod/releases/latest)
 
 ## License
 

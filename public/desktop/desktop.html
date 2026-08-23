@@ -94,6 +94,8 @@
         </div>
       </header>
 
+      <div id="ds-auth-banner" class="ds-auth-banner hidden" role="alert"><span data-i18n="ds.authExpired">令牌已失效，连接已暂停</span><button id="btn-auth-reenter" class="ds-btn" data-i18n="ds.authReenter">重新输入令牌</button></div>
+
       <main class="ds-content">
         <!-- 系统总览 -->
         <section id="view-overview" class="ds-view hidden">
@@ -470,6 +472,7 @@
         'ds.connPollTitle': '当前网络不支持实时推送，已降级为轮询（延迟数秒）',
         'ds.currentServer': '{group} · {url}', 'ds.origin': '当前页面',
         'ds.toastSent': '已发送', 'ds.toastCopied': '令牌已复制', 'ds.toastAuth': '令牌无效',
+        'ds.authExpired': '令牌已失效，连接已暂停', 'ds.authReenter': '重新输入令牌',
         'ds.toastConnFailed': '连接失败', 'ds.toastOpFailed': '操作失败',
         'ds.sessionsEmpty': '暂无会话', 'ds.loading': '加载中…',
         'ds.historyLoading': '加载历史…', 'ds.historyEmpty': '暂无消息',
@@ -570,6 +573,7 @@
         'ds.connPollTitle': 'Realtime push is unavailable on this network; degraded to polling (a few seconds delay)',
         'ds.currentServer': '{group} · {url}', 'ds.origin': 'this page',
         'ds.toastSent': 'Sent', 'ds.toastCopied': 'Token copied', 'ds.toastAuth': 'Invalid token',
+        'ds.authExpired': 'Token expired, connection paused', 'ds.authReenter': 'Re-enter token',
         'ds.toastConnFailed': 'Connection failed', 'ds.toastOpFailed': 'Operation failed',
         'ds.sessionsEmpty': 'No sessions', 'ds.loading': 'Loading…',
         'ds.historyLoading': 'Loading history…', 'ds.historyEmpty': 'No messages yet',
