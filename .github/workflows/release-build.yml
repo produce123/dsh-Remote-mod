@@ -80,12 +80,17 @@ jobs:
       - name: Publish npm
         # mod fork: 无 NPM_TOKEN 时跳过, 插件以 tgz + GitHub Releases 交付;
         # 若 fork 配置了 NPM_TOKEN, 按 package.json 的 name 发布(本 fork 为 dsh-remote-mod-plugin)。
-        # 注: secrets 不能在 job 级 env 门控, 故沿用 step 级 if (secrets 仅限 step 上下文)。
-        if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && secrets.NPM_TOKEN != ''
+        # 注: secrets 不能出现在 step 的 if: 表达式(Unrecognized named-value), 只能在 env 中使用,
+        # 因此在脚本内检查 token 为空则跳过, 而不是用 if 门控。
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         working-directory: packages/plugin
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "mod fork: 未配置 NPM_TOKEN, 跳过 npm 发布"
+            exit 0
+          fi
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VER=$(node -p "require('./package.json').version")
           NPM_TAG=latest
@@ -106,10 +111,16 @@ jobs:
 
       - name: Sync standalone repo
         # mod fork: 独立仓库同步依赖上游部署密钥, 无密钥时跳过(不影响发版资产)。
-        if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && secrets.DSH_RELEASE_DEPLOY_KEY != ''
+        # secrets 同样只能在 env 中引用, 空密钥在脚本内跳过。
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         env:
           DSH_RELEASE_DEPLOY_KEY: ${{ secrets.DSH_RELEASE_DEPLOY_KEY }}
-        run: npm run sync-standalone
+        run: |
+          if [ -z "${DSH_RELEASE_DEPLOY_KEY:-}" ]; then
+            echo "mod fork: 未配置 DSH_RELEASE_DEPLOY_KEY, 跳过独立仓库同步"
+            exit 0
+          fi
+          npm run sync-standalone
 
       - name: Generate SHA256SUMS
         run: |
