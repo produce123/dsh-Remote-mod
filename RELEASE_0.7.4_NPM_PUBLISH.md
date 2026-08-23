@@ -42,6 +42,25 @@ npm publish --access public --tag latest
 - 会触发浏览器 / OTP 2FA 验证：保持登录态，按提示完成验证码输入；
 - 若报 `403 E409` 表示该版本已存在（重复发布），检查 `npm view dsh-remote-mod-plugin versions`。
 
+### 已发布过该版本号怎么办（403：cannot publish over previously published versions）
+
+同一版本号不能覆盖发布。修复版仍想用 0.7.4-mod 的，先撤旧再重发（仅限发布后 72 小时内、且无人依赖）：
+
+```bash
+cd packages/plugin
+npm unpublish dsh-remote-mod-plugin@0.7.4-mod --force   # 撤下旧(未修复)版本
+npm publish --access public --tag latest                # 重发当前目录里的修复版
+```
+
+> 注意：`npm unpublish` 与 `npm publish` 都必须在你已登录 npm 的终端里交互完成（会弹浏览器验证）。
+> 若撤不下来（超过 72h 或已有依赖），改用递增版本号方案：
+>
+> ```bash
+> # 把 packages/plugin/package.json 的 version 改为 0.7.4-mod.1 后：
+> cd packages/plugin && npm pack && npm publish --access public --tag latest
+> # 安装命令相应改为 dsh-remote-mod-plugin@0.7.4-mod.1（不带后缀仍拿 latest）
+> ```
+
 ## 四、安装验证（发布后必须验证一次）
 
 ```bash
