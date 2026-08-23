@@ -73,7 +73,7 @@ jobs:
           cp dist/dsh-remote-win.exe dist/dsh-remote-win-x64.exe
           ls -la dist
 
-      - name: Pack plugin tarball (mod fork: 插件以 Releases 内 tgz 交付)
+      - name: "Pack plugin tarball (mod fork: tgz 交付)"
         working-directory: packages/plugin
         run: npm pack
 
