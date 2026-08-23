@@ -658,41 +658,28 @@ button.overview-attention-item, button.overview-session-item { cursor:pointer; }
 /* ---------- 底部导航 ---------- */
 .bottom-nav {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 25;
-  display: flex; align-items: flex-end; min-height: 88px; gap: 3px; isolation: isolate;
-  padding: 0 8px var(--dsr-safe-b); background: transparent; border-top: none;
-}
-.nav-wave { position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; filter: drop-shadow(0 -8px 20px var(--dsr-shadow)); }
-.nav-wave svg { width: 100%; height: 100%; display: block; overflow: visible; }
-.nav-wave-fill { fill: var(--dsr-nav-bg); }
-.nav-wave-line { fill: none; stroke: var(--dsr-accent-line); stroke-width: .55; vector-effect: non-scaling-stroke; }
-.nav-wave::after { content: ''; position: absolute; left: 10%; right: 10%; top: 28%; height: 1px; background: linear-gradient(90deg, transparent, var(--dsr-accent-2-line), var(--dsr-accent-line), transparent); opacity: .45;
+  display: flex; align-items: center; min-height: 64px; gap: 2px;
+  padding: 4px 8px var(--dsr-safe-b);
+  background: var(--dsr-nav-bg); border-top: 1px solid var(--dsr-line);
 }
 .nav-btn {
-  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px;
-  min-width: 0; min-height: 69px; padding: 7px 2px 5px; color: var(--dsr-nav-muted); font-size: 11px; position: relative;
-  border-radius: 14px 14px 0 0; touch-action: manipulation;
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  min-width: 0; min-height: 52px; padding: 5px 2px; color: var(--dsr-nav-muted); font-size: 11px; position: relative;
+  border-radius: 12px; touch-action: manipulation;
 }
 .nav-btn .nav-ico { width: 22px; height: 22px; display: grid; place-items: center; line-height: 1; transition: transform .18s ease, color .18s ease; }
 .nav-btn .nav-ico svg { width: 21px; height: 21px; display: block; }
 .nav-btn:nth-of-type(1) { --nav-tint: var(--dsr-info); }
 .nav-btn:nth-of-type(2) { --nav-tint: var(--dsr-success); }
-.nav-btn:nth-of-type(4) { --nav-tint: var(--dsr-warning); }
-.nav-btn:nth-of-type(5) { --nav-tint: var(--dsr-accent-2); }
-.nav-btn:not(.nav-home) .nav-ico { color: var(--nav-tint, var(--dsr-nav-muted)); opacity: .82; }
-.nav-btn:not(.nav-home) > span:last-of-type { color: var(--dsr-nav-muted); }
-.nav-btn.active:not(.nav-home) { color: var(--dsr-nav-active); }
-.nav-btn.active:not(.nav-home) .nav-ico { transform: translateY(-1px); opacity: 1; }
-.nav-btn.active:not(.nav-home)::after { content: ''; position: absolute; bottom: 3px; width: 4px; height: 4px; border-radius: 50%; background: var(--dsr-nav-active); box-shadow: 0 0 10px var(--dsr-glow); }
-.nav-home { z-index: 2; transform: translateY(-13px); color: var(--dsr-nav-muted); }
-.nav-home-orb { width: 56px; height: 56px; display: grid; place-items: center; border-radius: 50%; background: var(--dsr-bg-2); border: 1px solid var(--dsr-accent-line); box-shadow: 0 5px 18px var(--dsr-shadow); transition: transform .18s ease, background .18s ease, box-shadow .18s ease; }
-.nav-home .nav-ico { width: 30px; height: 30px; color: var(--dsr-accent-strong); }
-.nav-home .nav-ico svg { width: 29px; height: 29px; }
-.nav-home.active { color: var(--dsr-nav-active); }
-.nav-home.active .nav-home-orb { background: radial-gradient(circle at 34% 27%, var(--dsr-info), var(--dsr-accent) 42%, var(--dsr-accent-2)); border-color: var(--dsr-accent); color: var(--dsr-on-accent); box-shadow: 0 7px 24px var(--dsr-glow), inset 0 0 0 1px rgba(255,255,255,.32); }
-.nav-home.active .nav-ico { color: var(--dsr-on-accent); transform: none; }
-.nav-home:active .nav-home-orb { transform: scale(.96); }
+.nav-btn:nth-of-type(3) { --nav-tint: var(--dsr-warning); }
+.nav-btn:nth-of-type(4) { --nav-tint: var(--dsr-accent-2); }
+.nav-btn .nav-ico { color: var(--nav-tint, var(--dsr-nav-muted)); opacity: .82; }
+.nav-btn > span:last-of-type { color: var(--dsr-nav-muted); }
+.nav-btn.active { color: var(--dsr-nav-active); }
+.nav-btn.active .nav-ico { transform: translateY(-1px); opacity: 1; }
+.nav-btn.active::after { content: ''; position: absolute; bottom: 3px; width: 4px; height: 4px; border-radius: 50%; background: var(--dsr-nav-active); box-shadow: 0 0 10px var(--dsr-glow); }
 .nav-badge {
-  position: absolute; top: 1px; left: calc(50% + 19px); z-index: 3;
+  position: absolute; top: 2px; left: calc(50% + 12px); z-index: 3;
   background: var(--dsr-nav-badge-bg); color: var(--dsr-nav-badge-text); border-radius: 999px;
   font-size: 10px; font-weight: 800; padding: 0 6px; line-height: 16px;
 }

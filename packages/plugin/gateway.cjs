@@ -1998,14 +1998,41 @@ function serveTranscribe(req, res, url) {
     res.on('close', () => ctrl.abort())
     try {
       if (test) {
+        // 连接测试: 先探 GET /models; 部分 OpenAI 兼容服务不实现该端点,
+        // 回退到一次最小 chat 探测, 避免"正确 API 却报连不上"。探测超时 15s。
         const t0 = Date.now()
-        const r = await fetch(base + '/models', {
-          headers: { authorization: 'Bearer ' + key },
-          signal: ctrl.signal
+        const probeTimer = setTimeout(() => ctrl.abort(), 15000)
+        const models = await fetch(base + '/models', {
+          headers: { authorization: 'Bearer ' + key, accept: 'application/json' },
+          signal: ctrl.signal,
         }).catch(() => null)
-        clearTimeout(timer)
+        if (models?.ok) {
+          clearTimeout(timer); clearTimeout(probeTimer)
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ ok: true, via: 'models', status: models.status, ms: Math.round(Date.now() - t0) }))
+          return
+        }
+        const chat = await fetch(base + '/chat/completions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json', authorization: 'Bearer ' + key },
+          body: JSON.stringify({ model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1, stream: false }),
+          signal: ctrl.signal,
+        }).catch(() => null)
+        clearTimeout(timer); clearTimeout(probeTimer)
+        const ms = Math.round(Date.now() - t0)
+        if (!chat) {
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ ok: false, error: 'network', ms, modelsStatus: models?.status || 0 }))
+          return
+        }
+        if (!chat.ok) {
+          const detail = await chat.text().catch(() => '')
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ ok: false, error: String(chat.status), status: chat.status, ms, msg: detail.slice(0, 300), modelsStatus: models?.status || 0 }))
+          return
+        }
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(JSON.stringify(r ? { ok: r.ok, status: r.status, ms: Math.round(Date.now() - t0) } : { ok: false, error: 'network' }))
+        res.end(JSON.stringify({ ok: true, via: 'chat', status: chat.status, ms, model }))
         return
       }
       const msgsOk = Array.isArray(messages) && messages.length > 0 && messages.every((m) =>

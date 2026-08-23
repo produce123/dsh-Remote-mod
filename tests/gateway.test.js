@@ -955,6 +955,68 @@ test('插件 /remote/admin 统一 302 到网关 /admin（动态端口 + 令牌�
   }
 })
 
+test('插件 /remote/transcribe 代理到本地网关（SSE 透传）', async () => {
+  const savedGateway = process.env.DSH_REMOTE_GATEWAY
+  const savedToken = process.env.DSH_REMOTE_TOKEN
+  let seenAuth = null
+  const mockGateway = http.createServer((req, res) => {
+    let b = ''
+    req.on('data', (c) => { b += c })
+    req.on('end', () => {
+      if (req.url === '/transcribe' && req.method === 'POST') {
+        seenAuth = req.headers.authorization || null
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+        res.write('data: {"choices":[{"delta":{"content":"代理"}}]}\n\n')
+        res.end('data: [DONE]\n\n')
+        return
+      }
+      res.writeHead(404)
+      res.end()
+    })
+  })
+  const gwPort = await new Promise((resolve) => mockGateway.listen(0, '127.0.0.1', () => resolve(mockGateway.address().port)))
+  try {
+    process.env.DSH_REMOTE_GATEWAY = `http://127.0.0.1:${gwPort}`
+    process.env.DSH_REMOTE_TOKEN = 'plugin-token-xyz'
+    const mod = await import(pathToFileURL(path.join(ROOT, 'packages/plugin/index.mjs')).href)
+    const { serveStatic } = mod
+    const { Readable } = require('node:stream')
+
+    const req = Readable.from([JSON.stringify({ test: true, base: 'http://x', model: 'm', key: 'k' })])
+    req.method = 'POST'
+    req.url = '/remote/transcribe'
+    req.headers = { 'content-type': 'application/json' }
+    let written = ''
+    const res = {
+      writeHead(status, headers) { this.status = status; this.headers = headers },
+      write(c) { written += Buffer.from(c).toString('utf8') },
+      end() {},
+    }
+    await serveStatic(req, res, {})
+    assert.equal(res.status, 200)
+    assert.match(res.headers['content-type'] || '', /text\/event-stream/)
+    assert.match(written, /代理/)
+    assert.match(written, /\[DONE\]/)
+    assert.equal(seenAuth, 'Bearer plugin-token-xyz')
+
+    // OPTIONS 预检放行
+    const optReq = Readable.from([])
+    optReq.method = 'OPTIONS'
+    optReq.url = '/remote/transcribe'
+    optReq.headers = { origin: 'http://localhost:8080' }
+    const optRes = { writeHead(status, headers) { this.status = status; this.headers = headers }, end() {} }
+    await serveStatic(optReq, optRes, {})
+    assert.equal(optRes.status, 204)
+  } finally {
+    if (savedGateway === undefined) delete process.env.DSH_REMOTE_GATEWAY
+    else process.env.DSH_REMOTE_GATEWAY = savedGateway
+    if (savedToken === undefined) delete process.env.DSH_REMOTE_TOKEN
+    else process.env.DSH_REMOTE_TOKEN = savedToken
+    mockGateway.closeAllConnections?.()
+    await new Promise((resolve) => mockGateway.close(resolve))
+  }
+})
+
 test('转写代理：鉴权、配置校验、test 模式与 SSE 流式透传', async () => {
   // 存根 provider：记录收到的鉴权头/请求体，返回 OpenAI 兼容响应
   const seen = { auth: null, modelsAuth: null, streamFlag: null, body: null }
@@ -1063,6 +1125,38 @@ test('转写代理：鉴权、配置校验、test 模式与 SSE 流式透传', a
     assert.equal(testData.ok, true)
     assert.ok(Number.isInteger(testData.ms) && testData.ms >= 0)
     assert.equal(seen.modelsAuth, 'Bearer sk-test')
+
+    // 连接测试回退: 不实现 GET /models 的兼容服务, 回退到最小 chat 探测
+    const provider2 = http.createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/models') { res.writeHead(404); res.end(); return }
+      if (req.method === 'POST' && req.url === '/chat/completions') {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }))
+        return
+      }
+      res.writeHead(404); res.end()
+    })
+    const provider2Port = await new Promise((resolve) => provider2.listen(0, '127.0.0.1', () => resolve(provider2.address().port)))
+    res = await fetch(tbase + '/transcribe', {
+      method: 'POST', headers: hdrs,
+      body: JSON.stringify({ test: true, base: `http://127.0.0.1:${provider2Port}`, model: 'gpt-x', key: 'sk-test' })
+    })
+    assert.equal(res.status, 200)
+    const fallback = await res.json()
+    assert.equal(fallback.ok, true, '不实现 /models 的服务应回退到 chat 探测成功: ' + JSON.stringify(fallback))
+    assert.equal(fallback.via, 'chat')
+
+    // 模型服务完全不可达 → ok:false error:'network'
+    res = await fetch(tbase + '/transcribe', {
+      method: 'POST', headers: hdrs,
+      body: JSON.stringify({ test: true, base: 'http://127.0.0.1:1', model: 'gpt-x', key: 'sk-test' })
+    })
+    assert.equal(res.status, 200)
+    const netFail = await res.json()
+    assert.equal(netFail.ok, false)
+    assert.equal(netFail.error, 'network')
+    provider2.closeAllConnections?.()
+    await new Promise((resolve) => provider2.close(resolve))
 
     // 流式代理: SSE 透传 delta 与 [DONE], provider 收到 stream:true 与原文
     res = await fetch(tbase + '/transcribe', { method: 'POST', headers: hdrs, body: JSON.stringify(payload({})) })

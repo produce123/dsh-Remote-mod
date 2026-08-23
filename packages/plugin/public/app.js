@@ -3314,10 +3314,14 @@ function transcribeErrText(err) {
 }
 function transcribeGatewayBase() {
   // 一律经网关 /transcribe 代理转发(规避 WebView 直连第三方 API 的 CORS 限制);
-  // 浏览器直接打开网关页面时退化为同源请求
+  // 浏览器直接打开网关页面时退化为同源请求; DSH 插件 /remote 前缀由插件代理到网关。
   const s = (state.server || '').replace(/\/+$/, '')
   if (s) return s
-  if (location.protocol === 'http:' || location.protocol === 'https:') return location.origin
+  if (location.protocol === 'http:' || location.protocol === 'https:') {
+    return location.pathname === '/remote' || location.pathname.startsWith('/remote/')
+      ? location.origin + '/remote'
+      : location.origin
+  }
   return ''
 }
 async function transcribePost(cfg, payload) {
@@ -3460,7 +3464,10 @@ async function transcribeConnTest() {
       setTranscribeStatus(ok)
       return toast(ok, 'ok')
     }
-    errText = data.error === 'network' ? t('transcribe.networkError') : (data.error || TC.statusMessage(data.status || 0))
+    // 网关返回的 provider 原始错误(如 401 密钥错误/模型不存在)优先展示
+    let providerMsg = ''
+    try { const j = JSON.parse(data.msg || ''); providerMsg = j?.error?.message || j?.message || '' } catch { providerMsg = String(data.msg || '') }
+    errText = data.error === 'network' ? t('transcribe.networkError') : (providerMsg.trim() || data.error || TC.statusMessage(data.status || 0))
   } catch (err) { errText = transcribeErrText(err) }
   const fail = t('transcribe.statusConnFail', { msg: errText })
   setTranscribeStatus(fail)
