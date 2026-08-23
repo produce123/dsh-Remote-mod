@@ -51,7 +51,7 @@ jobs:
             const fs = require('fs');
             const sums = fs.readFileSync('dist/SHA256SUMS-macos.txt', 'utf8').trim();
             const body = '# DSH Remote macOS 预览版（Apple Silicon）\n\n' +
-              '> ⚠️ **盲验版本**：作者没有 macOS 设备，本产物仅由 CI 在 macOS runner 上构建并做 ad-hoc 签名，未经过真机验证。如遇 bug 请到 [Issues](https://github.com/Blank-not-black/dsh-Remote/issues/new/choose) 反馈。\n' +
+              '> ⚠️ **盲验版本**：作者没有 macOS 设备，本产物仅由 CI 在 macOS runner 上构建并做 ad-hoc 签名，未经过真机验证。如遇 bug 请到 [Issues](https://github.com/produce123/dsh-Remote-mod/issues/new/choose) 反馈。\n' +
               '> ⏱️ **更新周期**：macOS 版功能更新周期会显著长于 Windows / Linux 版，仅在有需要时手动构建。\n\n' +
               '## 适用平台\n\n' +
               '- 仅适用于 Apple Silicon（M 系列）Mac\n' +

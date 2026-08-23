@@ -15,3 +15,4 @@ android/build/
 .gradle-home/
 .npm-cache/
 SHA256SUMS-rc.txt
+packages/plugin/*.tgz

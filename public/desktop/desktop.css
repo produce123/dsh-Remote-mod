@@ -151,7 +151,6 @@ a.ds-btn { text-decoration: none; }
 .ds-icon-btn { width: 32px; height: 32px; border-radius: 9px; border: 1px solid var(--dsr-line); background: var(--dsr-bg-2); color: var(--dsr-accent-strong); cursor: pointer; font-size: 15px; display: inline-flex; align-items: center; justify-content: center; }
 .ds-icon-btn svg { width: 17px; height: 17px; display: block; }
 .ds-icon-btn:hover { filter: brightness(1.06); }
-#btn-donate { color: var(--dsr-accent-2); }
 #btn-stats-top { color: var(--dsr-info); }
 #btn-mobile-nav { display: none; }
 .ds-title { flex: 1; min-width: 0; font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

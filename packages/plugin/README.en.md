@@ -10,9 +10,9 @@ The mod-branch fixed bundle plugin for DSH Remote (independent of the upstream `
 dsh plugin --profile web add dsh-remote-mod-plugin
 
 # Optional version pin (requires npm publish rights; this fork ships a tgz in Releases)
-dsh plugin --profile web add dsh-remote-mod-plugin@0.6.9-mod
+dsh plugin --profile web add dsh-remote-mod-plugin@0.7.0-mod
 # or from a local tarball:
-# dsh plugin --profile web add /abs/path/dsh-remote-mod-plugin-0.6.9-mod.tgz
+# dsh plugin --profile web add /abs/path/dsh-remote-mod-plugin-0.7.0-mod.tgz
 ```
 
 Restart DSH Web and refresh the browser. The DSH Remote entry will appear in the sidebar.

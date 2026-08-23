@@ -14,6 +14,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # mod fork: 本 fork 无 NPM_TOKEN / DSH_RELEASE_DEPLOY_KEY secret, 用 env 门控跳过不应执行的步骤,
+      # 避免缺失 secret 使整个 job 失败、阻断 Release 资产上传。
+      HAS_NPM: ${{ secrets.NPM_TOKEN != '' }}
+      HAS_DEPLOY_KEY: ${{ secrets.DSH_RELEASE_DEPLOY_KEY != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -78,24 +83,25 @@ jobs:
         run: npm pack
 
       - name: Publish npm
-        # mod fork: 不发布 npm(无 NPM_TOKEN、包名已改为 dsh-remote-mod-plugin),
-        # 插件以上方 tgz + GitHub Releases 交付; 若 fork 后续配置了 NPM_TOKEN 才会发布。
-        if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && secrets.NPM_TOKEN != ''
+        # mod fork: 无 NPM_TOKEN 时跳过, 插件以 tgz + GitHub Releases 交付;
+        # 若 fork 配置了 NPM_TOKEN, 按 package.json 的 name 发布(本 fork 为 dsh-remote-mod-plugin)。
+        if: env.HAS_NPM == 'true'
         working-directory: packages/plugin
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VER=$(node -p "require('./package.json').version")
           NPM_TAG=latest
           if [[ "$PKG_VER" == *-* ]]; then NPM_TAG=next; fi
-          if npm view "dsh-remote-mod-plugin@$PKG_VER" version >/dev/null 2>&1; then
+          if npm view "${PKG_NAME}@${PKG_VER}" version >/dev/null 2>&1; then
             echo "npm 已发布 ${PKG_VER}, skip"
           else
             # 两个 tag 触发的发布任务可能同时到达 npm; 若另一任务刚发布完,
             # 把 duplicate version 视为成功, 但其他发布错误仍然失败。
             if npm publish --tag "$NPM_TAG" --access public --//registry.npmjs.org/:_authToken="$NPM_TOKEN"; then
               :
-            elif npm view "dsh-remote-mod-plugin@$PKG_VER" version >/dev/null 2>&1; then
+            elif npm view "${PKG_NAME}@${PKG_VER}" version >/dev/null 2>&1; then
               echo "npm 并发任务已发布 ${PKG_VER}, 视为成功"
             else
               exit 1
@@ -103,8 +109,8 @@ jobs:
           fi
 
       - name: Sync standalone repo
-        # mod fork: 独立仓库同步依赖上游作者部署密钥, fork 一般无此 secret, 缺失时跳过(不影响发版资产)。
-        if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && secrets.DSH_RELEASE_DEPLOY_KEY != ''
+        # mod fork: 独立仓库同步依赖上游部署密钥, 无密钥时跳过(不影响发版资产)。
+        if: env.HAS_DEPLOY_KEY == 'true'
         env:
           DSH_RELEASE_DEPLOY_KEY: ${{ secrets.DSH_RELEASE_DEPLOY_KEY }}
         run: npm run sync-standalone

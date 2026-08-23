@@ -322,10 +322,10 @@ async function selectSessionModel(provider, modelId) {
 
 /* ---------------- 反馈 ---------------- */
 const FEEDBACK_LINKS = {
-  githubIssues: 'https://github.com/Blank-not-black/dsh-Remote/issues',
-  giteeIssues: 'https://gitee.com/Blankneverfails/dsh-Remote/issues',
-  bili: 'https://space.bilibili.com/419009275/dynamic',
-  repo: 'https://github.com/Blank-not-black/dsh-Remote'
+  githubIssues: 'https://github.com/produce123/dsh-Remote-mod/issues',
+  bili: 'https://space.bilibili.com/3546916338010193/dynamic',
+  email: 'mailto:p2128887242@outlook.com',
+  repo: 'https://github.com/produce123/dsh-Remote-mod'
 }
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true } catch {}
@@ -358,10 +358,6 @@ function openFeedbackModal() {
   setTimeout(() => $('fb-msg').focus(), 50)
 }
 function closeFeedbackModal() { $('modal-feedback').classList.add('hidden') }
-function openDonateModal() {
-  const m = $('modal-donate')
-  if (m) m.classList.remove('hidden')
-}
 /* ---------------- 更新内容弹窗 ---------------- */
 const NOTES_KEY = 'seenNotesVersion'
 let notesVersion = ''
@@ -2313,11 +2309,6 @@ function bindUi() {
     }
   })
   $('session-list').addEventListener('click', (e) => {
-    if (e.target.closest('[data-archived-toggle]')) {
-      LS.set('dsShowArchivedV1', LS.get('dsShowArchivedV1', '0') === '1' ? '0' : '1')
-      renderSessions()
-      return
-    }
     const item = e.target.closest('[data-id]')
     if (item) openSession(item.dataset.id)
   })
@@ -2377,10 +2368,6 @@ function bindUi() {
   })
   $('btn-stats-top').addEventListener('click', toggleStatsDrawer)
   $('stats-drawer-close').addEventListener('click', toggleStatsDrawer)
-  // 赞赏支持
-  $('btn-donate').addEventListener('click', openDonateModal)
-  $('btn-donate-about').addEventListener('click', openDonateModal)
-  $('btn-donate-close').addEventListener('click', () => $('modal-donate').classList.add('hidden'))
   // 更新内容弹窗
   $('notes-close').addEventListener('click', closeNotesModal)
   $('notes-prev').addEventListener('click', () => scrollNotes(-1))

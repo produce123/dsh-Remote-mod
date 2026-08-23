@@ -79,7 +79,7 @@ const HTTP_KEEPALIVE_TIMEOUT_MS = durationEnv('GATEWAY_HTTP_KEEPALIVE_TIMEOUT_MS
 
 // 更新检查: GitHub 为默认源, 可用环境变量覆盖(国内镜像 / 代理)
 const UPDATE_CHECK_URL = process.env.UPDATE_CHECK_URL ||
-  'https://api.github.com/repos/Blank-not-black/dsh-Remote/releases/latest'
+  'https://api.github.com/repos/produce123/dsh-Remote-mod/releases/latest'
 const UPDATE_INTERVAL_MS = Number(process.env.UPDATE_INTERVAL_MS) || 6 * 3600 * 1000
 const latestState = { version: null, url: null, tag: null, checkedAt: 0, error: '' }
 

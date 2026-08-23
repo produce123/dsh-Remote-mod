@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        欢迎提想法！使用中的疑问建议先发到 [Discussions](https://github.com/Blank-not-black/dsh-Remote/discussions)。
+        欢迎提想法！使用中的疑问建议先发到 [Discussions](https://github.com/produce123/dsh-Remote-mod/discussions)。
   - type: textarea
     id: problem
     attributes:

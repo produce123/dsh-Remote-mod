@@ -10,9 +10,9 @@ DSH Remote mod 分支修复版 bundle 插件（独立于上游 dsh-remote-plugin
 dsh plugin --profile web add dsh-remote-mod-plugin
 
 # 也可以安装指定版本（需要 npm 发布权限；本仓库 Releases 附带 tgz 可用本地路径安装）
-dsh plugin --profile web add dsh-remote-mod-plugin@0.6.9-mod
+dsh plugin --profile web add dsh-remote-mod-plugin@0.7.0-mod
 # 或本地 tgz：
-# dsh plugin --profile web add /绝对路径/dsh-remote-mod-plugin-0.6.9-mod.tgz
+# dsh plugin --profile web add /绝对路径/dsh-remote-mod-plugin-0.7.0-mod.tgz
 ```
 
 重启 DSH Web 后刷新浏览器，左侧边栏会出现 DSH Remote 入口。

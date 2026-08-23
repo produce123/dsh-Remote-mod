@@ -257,7 +257,7 @@ function render(st) {
     : t('device.ipRefresh', { n: st.devices.length })
   if (isPlugin && !st.devices.length) {
     $('device-rows').innerHTML = ''
-    const rel = 'https://github.com/Blank-not-black/dsh-Remote/releases/latest/download/'
+    const rel = 'https://github.com/produce123/dsh-Remote-mod/releases/latest/download/'
     const apkBtn = `<a class="mini-btn" href="${rel}dsh-remote.apk" target="_blank" rel="noopener">${t('device.downloadApp')}</a>`
     if (!st.gatewayInstalled) {
       // 只有插件包真的没有内置网关程序时, 才引导下载网关
@@ -573,11 +573,6 @@ function openThemePanel() {
   $('modal-theme').classList.remove('hidden')
 }
 
-function openDonateModal() {
-  const m = $('modal-donate')
-  if (m) m.classList.remove('hidden')
-}
-
 $('btn-lang').addEventListener('click', () => {
   I18N.setLang(I18N.lang === 'zh' ? 'en' : 'zh')
   renderLangBtn()
@@ -588,10 +583,6 @@ $('btn-lang').addEventListener('click', () => {
 
 $('btn-theme').addEventListener('click', openThemePanel)
 $('theme-close').addEventListener('click', () => $('modal-theme').classList.add('hidden'))
-// 赞赏支持
-$('btn-donate').addEventListener('click', openDonateModal)
-$('donate-close').addEventListener('click', () => $('modal-donate').classList.add('hidden'))
-$('modal-donate').addEventListener('click', (e) => { if (e.target === $('modal-donate')) $('modal-donate').classList.add('hidden') })
 // 反馈
 $('btn-feedback').addEventListener('click', (e) => { e.stopPropagation(); toggleFeedbackMenu() })
 $('fb-menu').addEventListener('click', (e) => {

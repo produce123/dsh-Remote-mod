@@ -5,31 +5,33 @@
 
 DSH (DeepSeek Harness) remote console: view sessions, handle approvals and questions, and transfer files from your phone or another computer. It consists of three parts: a **DSH plugin** (with a self-managed gateway), a **standalone single-file gateway**, and an **Android app / WebUI**.
 
-## What this mod branch adds / fixes (v0.6.9-mod)
+## What this mod branch adds / fixes (v0.7.0-mod)
 
-Based on upstream `0.6.10-rc.1`:
-
-| # | Fix |
+| # | Change |
 | --- | --- |
-| 1 | Unified admin entry: `/remote/admin` redirects to the gateway-hosted admin page (token pre-filled); dead pluginMode code removed |
-| 2 | Large old sessions no longer fail to load: history timeout raised to 180s with automatic retry |
-| 3 | Device list groups by IP: one row per device (mux·host channels merged), admin page itself excluded |
-| 4 | Mobile session input box sits flush to the bottom (removed the stale 58px gap) |
-| 5 | Desktop "gateway unhealthy" false alarm fixed: real `/health` probe instead of config existence checks |
-| 6 | 401 toast spam after token rotation collapsed into one notice + banner; auto token renewal when hosted by the plugin |
+| 1 | **Desktop archived-session toggle fixed**: removed the broken interceptor — collapse/expand of archived sessions now toggles reliably |
+| 2 | **Original author's sponsor feature removed; channels switched to this fork**: donation entries removed site-wide; repo / feedback links now point to this repo's GitHub Issues and email (p2128887242@outlook.com); Bilibili updated to the new address; the Gitee channel is removed |
+| 3 | **New "prompt transcribe" feature**: Settings → General toggle; configure an OpenAI-compatible API (base URL / model / key) with connection test and function test; a one-tap "Transcribe" button in the fullscreen composer rewrites input into a clean prompt; ships a fixed system prompt plus a Doubao alternative with one-click copy |
 
-Plus: whole-repo audit cleanup (~110 lines removed, **zero new dependencies**), history rendering extracted into `public/history-core.js` with `tests/history.test.js`.
+Also:
+
+- README rewritten (Chinese/English kept in sync). Release pipeline reuses the flow validated in v0.6.9-mod;
+- Zero new dependencies; `npm run check` all green.
+
+## v0.6.9-mod base fixes recap
+
+Based on upstream `0.6.10-rc.1`, 6 fixes: unified admin entry (`/remote/admin` 302 to the gateway source), 180s history timeout with automatic retry for huge old sessions, device list grouped by IP, mobile session input flush to the bottom, real `/health` probe replacing the desktop "gateway unhealthy" false alarm, and collapsed 401 toasts with auto token renewal after rotation. Plus: whole-repo ponytail audit cleanup (~110 lines removed) and the plugin renamed `dsh-remote-mod-plugin` (registration `dsh-remote-mod`) so it can coexist with the original plugin.
 
 ## Standalone plugin: dsh-remote-mod-plugin
 
 Delivered under an independent package name so it never conflicts with the upstream `dsh-remote-plugin` (registration name `dsh-remote-mod`):
 
 ```sh
-# From npm (requires publish rights; this fork does not publish to npm — for reference only)
+# From npm (published; see the release notes for the exact tag)
 dsh plugin --profile web add dsh-remote-mod-plugin
 
 # From the local tarball shipped in Releases (recommended)
-dsh plugin --profile web add /abs/path/dsh-remote-mod-plugin-0.6.9-mod.tgz
+dsh plugin --profile web add /abs/path/dsh-remote-mod-plugin-0.7.0-mod.tgz
 ```
 
 Restart DSH Web and hard-refresh the browser (Ctrl+F5) to see the DSH Remote sidebar entry.
@@ -58,7 +60,7 @@ cd packages/plugin && npm pack   # package the plugin tarball
 - Upstream: [Blank-not-black/dsh-Remote](https://github.com/Blank-not-black/dsh-Remote)
 - This fork: [produce123/dsh-Remote-mod](https://github.com/produce123/dsh-Remote-mod)
 - Releases: [GitHub Releases](https://github.com/produce123/dsh-Remote-mod/releases)
-- Issues: [Issues](https://github.com/produce123/dsh-Remote-mod/issues)
+- Issues: [Issues](https://github.com/produce123/dsh-Remote-mod/issues) (or email p2128887242@outlook.com)
 
 ## License
 

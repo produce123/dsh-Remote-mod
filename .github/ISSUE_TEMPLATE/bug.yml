@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        感谢反馈！提交前请先搜一下[已有 Issue](https://github.com/Blank-not-black/dsh-Remote/issues?q=is%3Aissue)，避免重复。
+        感谢反馈！提交前请先搜一下[已有 Issue](https://github.com/produce123/dsh-Remote-mod/issues?q=is%3Aissue)，避免重复。
   - type: input
     id: version
     attributes:

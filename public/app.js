@@ -103,10 +103,10 @@ function toast(text, kind = '') {
 
 /* ---------------- 反馈 ---------------- */
 const FEEDBACK_LINKS = {
-  githubIssues: 'https://github.com/Blank-not-black/dsh-Remote/issues',
-  giteeIssues: 'https://gitee.com/Blankneverfails/dsh-Remote/issues',
-  bili: 'https://space.bilibili.com/419009275/dynamic',
-  repo: 'https://github.com/Blank-not-black/dsh-Remote'
+  githubIssues: 'https://github.com/produce123/dsh-Remote-mod/issues',
+  bili: 'https://space.bilibili.com/3546916338010193/dynamic',
+  email: 'mailto:p2128887242@outlook.com',
+  repo: 'https://github.com/produce123/dsh-Remote-mod'
 }
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true } catch {}
@@ -3614,7 +3614,7 @@ function showView(id) {
   if (id === 'view-settings') showSettingsHome()
 }
 
-const SETTINGS_GROUPS = ['general', 'servers', 'notify', 'theme', 'about']
+const SETTINGS_GROUPS = ['general', 'transcribe', 'servers', 'notify', 'theme', 'about']
 function showSettingsHome() {
   const home = $('settings-home')
   if (!home) return
@@ -3628,6 +3628,163 @@ function showSettingsPage(name) {
   home.classList.add('hidden')
   for (const g of SETTINGS_GROUPS) $('settings-page-' + g)?.classList.toggle('hidden', g !== name)
   window.scrollTo(0, 0)
+}
+
+/* ---------------- prompt 转写 ---------------- */
+const TC = window.TranscribeCore
+const TRANSCRIBE_LS = { on: 'dshPromptTranscribe', url: 'dshTranscribeApiUrl', model: 'dshTranscribeModel', key: 'dshTranscribeApiKey' }
+const TRANSCRIBE_TIMEOUT = 30000
+let transcribeKeyEditing = false
+
+function transcribeCfg() {
+  return {
+    on: LS.get(TRANSCRIBE_LS.on, '0') === '1',
+    url: (LS.get(TRANSCRIBE_LS.url, '') || '').trim().replace(/\/+$/, ''),
+    model: (LS.get(TRANSCRIBE_LS.model, '') || '').trim(),
+    key: LS.get(TRANSCRIBE_LS.key, '') || ''
+  }
+}
+function transcribeReady(cfg) {
+  cfg = cfg || transcribeCfg()
+  return cfg.on && !!cfg.url && !!cfg.model && !!cfg.key
+}
+function transcribeErrText(err) {
+  if (err && err.name === 'TimeoutError') return t('transcribe.timeout')
+  if (err && (err.name === 'AbortError' || err.name === 'TypeError')) return t('transcribe.networkError')
+  return err && err.message ? err.message : t('transcribe.networkError')
+}
+async function transcribeChat(cfg, raw) {
+  const res = await fetch(cfg.url + '/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.key },
+    body: JSON.stringify({ model: cfg.model, messages: [{ role: 'system', content: TC.TRANSCRIBE_SYSTEM_PROMPT }, { role: 'user', content: raw }] }),
+    signal: AbortSignal.timeout(TRANSCRIBE_TIMEOUT)
+  })
+  if (!res.ok) throw new Error(TC.statusMessage(res.status))
+  const data = await res.json()
+  const text = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content
+  if (typeof text !== 'string') throw new Error(t('transcribe.noContent'))
+  return text
+}
+
+/* --- 设置页 --- */
+function transcribeKeyMasked() { return TC.maskApiKey(LS.get(TRANSCRIBE_LS.key, '')) }
+function enterTranscribeKeyEdit() {
+  const el = $('transcribe-api-key')
+  if (!el || !el.readOnly) return
+  transcribeKeyEditing = true
+  el.value = LS.get(TRANSCRIBE_LS.key, '')
+  el.readOnly = false
+  el.focus()
+  el.setSelectionRange(el.value.length, el.value.length)
+}
+function saveTranscribeKey() {
+  const el = $('transcribe-api-key')
+  if (!el || !transcribeKeyEditing) return
+  transcribeKeyEditing = false
+  LS.set(TRANSCRIBE_LS.key, el.value.trim())
+  el.value = transcribeKeyMasked()
+  el.readOnly = true
+  updateComposerTranscribeButton()
+}
+function setTranscribeStatus(text) {
+  const el = $('transcribe-status')
+  if (!el) return
+  el.textContent = text
+  el.classList.toggle('hidden', !text)
+}
+function updateTranscribeConfigVis() {
+  const on = $('opt-transcribe')?.checked
+  $('transcribe-config')?.classList.toggle('hidden', !on)
+}
+function initTranscribeUi() {
+  const urlEl = $('transcribe-api-url'); if (urlEl) urlEl.value = LS.get(TRANSCRIBE_LS.url, '')
+  const modelEl = $('transcribe-model'); if (modelEl) modelEl.value = LS.get(TRANSCRIBE_LS.model, '')
+  const keyEl = $('transcribe-api-key')
+  if (keyEl) { keyEl.value = transcribeKeyMasked(); keyEl.readOnly = true }
+  const opt = $('opt-transcribe'); if (opt) opt.checked = LS.get(TRANSCRIBE_LS.on, '0') === '1'
+  const promptEl = $('transcribe-system-prompt'); if (promptEl) promptEl.value = TC.TRANSCRIBE_SYSTEM_PROMPT
+  updateTranscribeConfigVis()
+  updateComposerTranscribeButton()
+}
+async function transcribeConnTest() {
+  const cfg = transcribeCfg()
+  if (!transcribeReady(cfg)) return toast(t('transcribe.configIncomplete'), 'err')
+  setTranscribeStatus(t('transcribe.statusConnecting'))
+  const t0 = performance.now()
+  let errText = ''
+  try {
+    const res = await fetch(cfg.url + '/models', {
+      headers: { 'Authorization': 'Bearer ' + cfg.key },
+      signal: AbortSignal.timeout(TRANSCRIBE_TIMEOUT)
+    })
+    const ms = Math.round(performance.now() - t0)
+    if (!res.ok) errText = TC.statusMessage(res.status)
+    else { const ok = t('transcribe.statusConnOk', { ms }); setTranscribeStatus(ok); return toast(ok, 'ok') }
+  } catch (err) { errText = transcribeErrText(err) }
+  const fail = t('transcribe.statusConnFail', { msg: errText })
+  setTranscribeStatus(fail)
+  toast(fail, 'err')
+}
+
+/* --- 功能测试全屏 --- */
+function openTranscribeTest() {
+  if (!transcribeReady()) return toast(t('transcribe.configIncomplete'), 'err')
+  const ov = $('view-transcribe-test')
+  if (!ov) return
+  ov.classList.remove('hidden')
+  if ($('transcribe-test-input')) $('transcribe-test-input').value = ''
+  if ($('transcribe-test-output')) $('transcribe-test-output').value = ''
+  setTranscribeTestBusy(false)
+  $('transcribe-test-input')?.focus()
+}
+function closeTranscribeTest() { $('view-transcribe-test')?.classList.add('hidden') }
+function setTranscribeTestBusy(busy) {
+  const btn = $('btn-transcribe-test-convert')
+  if (!btn) return
+  btn.disabled = busy
+  btn.textContent = t(busy ? 'transcribe.testConverting' : 'transcribe.testConvert')
+}
+async function runTranscribeTest() {
+  const raw = $('transcribe-test-input')?.value || ''
+  if (!raw.trim()) return toast(t('transcribe.testEmpty'), 'err')
+  setTranscribeTestBusy(true)
+  try {
+    const text = await transcribeChat(transcribeCfg(), raw)
+    if ($('transcribe-test-output')) $('transcribe-test-output').value = text
+    toast(t('transcribe.testDone'), 'ok')
+  } catch (err) { toast(t('transcribe.testFailed', { msg: transcribeErrText(err) }), 'err') }
+  finally { setTranscribeTestBusy(false) }
+}
+
+/* --- 全屏输入框转写 --- */
+function updateComposerTranscribeButton() {
+  const btn = $('btn-fs-transcribe')
+  if (!btn) return
+  const show = !!($('composer-wrap')?.classList.contains('fs')) && transcribeReady()
+  btn.classList.toggle('hidden', !show)
+  if (show) btn.textContent = t('composer.transcribe')
+}
+async function composerTranscribe() {
+  const input = $('composer-input')
+  const btn = $('btn-fs-transcribe')
+  if (!input) return
+  const cfg = transcribeCfg()
+  if (!transcribeReady(cfg)) return toast(t('transcribe.configIncomplete'), 'err')
+  const raw = input.value
+  if (!raw.trim()) return toast(t('transcribe.needText'), 'err')
+  if (btn) { btn.disabled = true; btn.textContent = t('composer.transcribing') }
+  try {
+    const text = await transcribeChat(cfg, raw)
+    input.value = text
+    input.selectionStart = input.selectionEnd = text.length
+    autosize(input)
+    toast(t('composer.transcribeDone'), 'ok')
+  } catch (err) {
+    toast(t('composer.transcribeFail', { msg: transcribeErrText(err) }), 'err')
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = t('composer.transcribe') }
+  }
 }
 
 function updateConn() {
@@ -3715,6 +3872,7 @@ function setComposerFullscreen(on) {
     autosize($('composer-input'))
   }
   updateComposerFullscreenButton()
+  updateComposerTranscribeButton()
 }
 
 function bindComposerFullscreenGesture() {
@@ -3957,11 +4115,6 @@ function openThemePanel() {
   $('modal-theme').classList.remove('hidden')
 }
 
-function openDonateModal() {
-  const m = $('modal-donate')
-  if (m) m.classList.remove('hidden')
-}
-
 function bindUi() {
   renderLangBtn()
   renderThemeBtn()
@@ -3983,11 +4136,6 @@ function bindUi() {
   })
   $('btn-theme').addEventListener('click', openThemePanel)
   $('theme-close').addEventListener('click', () => $('modal-theme').classList.add('hidden'))
-  $('btn-donate').addEventListener('click', openDonateModal)
-  $('donate-close').addEventListener('click', () => $('modal-donate').classList.add('hidden'))
-  document.addEventListener('click', (e) => {
-    if (e.target.closest('[data-donate-open]')) openDonateModal()
-  })
   // 更新内容弹窗
   $('notes-close').addEventListener('click', closeNotesModal)
   $('notes-prev').addEventListener('click', () => scrollNotes(-1))
@@ -4324,6 +4472,28 @@ function bindUi() {
     if (state.current) renderHistory(true)
     toast(e.target.checked ? t('settings.toolsShown') : t('settings.toolsHidden'), 'ok')
   })
+
+  // prompt 转写
+  initTranscribeUi()
+  $('opt-transcribe')?.addEventListener('change', (e) => {
+    LS.set(TRANSCRIBE_LS.on, e.target.checked ? '1' : '0')
+    updateTranscribeConfigVis()
+    updateComposerTranscribeButton()
+    toast(t(e.target.checked ? 'transcribe.on' : 'transcribe.off'), 'ok')
+  })
+  $('transcribe-api-url')?.addEventListener('change', (e) => { LS.set(TRANSCRIBE_LS.url, e.target.value.trim()); updateComposerTranscribeButton() })
+  $('transcribe-model')?.addEventListener('change', (e) => { LS.set(TRANSCRIBE_LS.model, e.target.value.trim()); updateComposerTranscribeButton() })
+  $('transcribe-api-key')?.addEventListener('click', enterTranscribeKeyEdit)
+  $('transcribe-api-key')?.addEventListener('blur', saveTranscribeKey)
+  $('btn-transcribe-conn')?.addEventListener('click', transcribeConnTest)
+  $('btn-transcribe-test')?.addEventListener('click', openTranscribeTest)
+  $('btn-transcribe-copy')?.addEventListener('click', async () => {
+    const ok = await copyText(TC.TRANSCRIBE_SYSTEM_PROMPT)
+    toast(ok ? t('transcribe.copied') : t('transcribe.copyFailed'), ok ? 'ok' : 'err')
+  })
+  $('btn-transcribe-test-exit')?.addEventListener('click', closeTranscribeTest)
+  $('btn-transcribe-test-convert')?.addEventListener('click', runTranscribeTest)
+  $('btn-fs-transcribe')?.addEventListener('click', composerTranscribe)
 
   // 文件页
   $('fs-up').addEventListener('click', fsUp)

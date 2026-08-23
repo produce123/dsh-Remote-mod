@@ -20,7 +20,6 @@
       <span class="brand-name">DSH Remote</span>
     </div>
     <div class="topbar-right">
-      <button id="btn-donate" class="topbar-btn icon-btn" data-i18n-title="settings.donate" data-i18n-aria="settings.donate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8h11v6a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4Z"/><path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17M9 4c0 1 1 1.2 1 2M13 4c0 1 1 1.2 1 2M5 20h13"/></svg></button>
       <button id="btn-feedback" class="topbar-btn icon-btn" data-i18n-title="feedback.title" data-i18n-aria="feedback.title" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H7l-3 2 .8-3.1A7.5 7.5 0 1 1 20 11.5Z"/><path d="M8 11.5h.01M12 11.5h.01M16 11.5h.01"/></svg></button>
       <button id="btn-refresh" class="topbar-btn icon-btn" data-i18n-title="a11y.refresh" data-i18n-aria="a11y.refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0 1 4"/><path d="M20 5v6h-6"/></svg></button>
       <span id="conn-badge" class="topbar-btn conn-badge off" data-i18n="conn.off">未连接</span>
@@ -148,6 +147,7 @@
               <svg id="fs-ico-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5"/></svg>
               <svg id="fs-ico-collapse" class="hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M9 3v6H3M15 3v6h6M9 21v-6H3M21 15h-6v6"/></svg>
             </button>
+            <button id="btn-fs-transcribe" class="composer-fs-btn composer-transcribe-btn hidden" type="button" data-i18n="composer.transcribe"></button>
           </div>
           <button id="btn-image" class="composer-image-btn" type="button" data-i18n-title="composer.addImage" data-i18n-aria="composer.addImage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.2"/><path d="m5 17 4.5-4.5 3 3 2-2L19 17"/></svg></button>
           <button id="btn-send" class="send-btn" data-i18n="composer.send">发送</button>
@@ -249,20 +249,20 @@
         </div>
         <div class="settings-group feedback-card">
           <div class="setting-row">
-            <div><div class="setting-name" data-i18n="settings.feedbackTitle">反馈渠道</div><div class="setting-desc" data-i18n="settings.feedbackDesc">GitHub / Gitee / B站：反馈 bug、提建议、唠嗑</div></div>
+            <div><div class="setting-name" data-i18n="settings.feedbackTitle">反馈渠道</div><div class="setting-desc" data-i18n="settings.feedbackDesc">GitHub / B站 / 邮箱：反馈 bug、提建议、唠嗑</div></div>
           </div>
           <div class="feedback-links">
-            <a class="feedback-btn primary" href="https://github.com/Blank-not-black/dsh-Remote" target="_blank" rel="noopener">
+            <a class="feedback-btn primary" href="https://github.com/produce123/dsh-Remote-mod" target="_blank" rel="noopener">
               <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8.01 8.01 0 0 0 5.47 7.59c.4.08.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
               <span>GitHub</span>
             </a>
-            <a class="feedback-btn" href="https://gitee.com/Blankneverfails/dsh-Remote" target="_blank" rel="noopener">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="6"/><path d="M7.5 13.5 7 19a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l-.5-5.5"/><circle cx="10" cy="8.6" r=".5" fill="currentColor" stroke="none"/><circle cx="14" cy="8.6" r=".5" fill="currentColor" stroke="none"/><path d="M11 10.8c.6.5 1.4.5 2 0"/></svg>
-              <span>Gitee</span>
-            </a>
-            <a class="feedback-btn" href="https://space.bilibili.com/419009275/dynamic" target="_blank" rel="noopener">
+            <a class="feedback-btn" href="https://space.bilibili.com/3546916338010193/dynamic" target="_blank" rel="noopener">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="6" width="17" height="11" rx="2"/><path d="M8.5 3.5v3M15.5 3.5v3"/><circle cx="9.2" cy="10.6" r=".5" fill="currentColor" stroke="none"/><circle cx="14.8" cy="10.6" r=".5" fill="currentColor" stroke="none"/><path d="M9.5 14c1.4 1 3.6 1 5 0"/></svg>
               <span>B站</span>
+            </a>
+            <a class="feedback-btn" href="mailto:p2128887242@outlook.com" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+              <span>邮箱</span>
             </a>
           </div>
         </div>
@@ -294,11 +294,68 @@
               <option value="send" data-i18n="settings.mobileEnterSend">回车发送</option>
             </select>
           </div>
+          <div class="setting-row" data-settings-group="transcribe" style="cursor:pointer">
+            <div><div class="setting-name" data-i18n="settings.transcribeTitle">prompt 转写</div><div class="setting-desc" data-i18n="settings.transcribeDesc">用 OpenAI 兼容 API 把输入内容改写为条理清晰的 prompt</div></div>
+            <span class="sc-arrow">›</span>
+          </div>
           <div class="setting-row">
             <div><div class="setting-name" data-i18n="presets.title">预设提示词</div><div class="setting-desc" data-i18n="presets.desc">常用提示词，对话界面一键插入（最多 20 条）</div></div>
             <button id="btn-preset-add" class="mini-btn" data-i18n="presets.add">新增</button>
           </div>
           <div id="preset-list" class="server-list"></div>
+        </div>
+      </div>
+
+      <div id="settings-page-transcribe" class="settings-subpage hidden">
+        <div class="settings-group">
+          <div class="setting-row" data-settings-back style="cursor:pointer">
+            <button class="mini-btn" data-i18n="settings.back">‹ 返回</button>
+            <div class="setting-name" data-i18n="settings.transcribeTitle">prompt 转写</div>
+          </div>
+        </div>
+        <div class="settings-group">
+          <div class="setting-row">
+            <div><div class="setting-name" data-i18n="settings.transcribeOn">prompt 转写</div><div class="setting-desc" data-i18n="settings.transcribeOnDesc">开启后，全屏输入框右上角出现「转写」按钮</div></div>
+            <label class="switch"><input type="checkbox" id="opt-transcribe"><span class="slider"></span></label>
+          </div>
+        </div>
+        <div class="settings-group hidden" id="transcribe-config">
+          <div class="setting-row">
+            <div class="transcribe-field">
+              <div class="setting-name" data-i18n="settings.transcribeApiUrl">API 地址</div>
+              <input id="transcribe-api-url" class="setting-input" type="text" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1">
+              <div class="setting-hint" data-i18n="settings.transcribeApiUrlHint">OpenAI 兼容：https://api.openai.com/v1</div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="transcribe-field">
+              <div class="setting-name" data-i18n="settings.transcribeModel">模型</div>
+              <input id="transcribe-model" class="setting-input" type="text" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="gpt-4o-mini">
+              <div class="setting-hint" data-i18n="settings.transcribeModelHint">任意已开通的模型，如 gpt-4o-mini</div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="transcribe-field">
+              <div class="setting-name" data-i18n="settings.transcribeApiKey">API 密钥</div>
+              <input id="transcribe-api-key" class="setting-input" type="text" autocomplete="off" spellcheck="false" readonly>
+              <div class="setting-hint" data-i18n="settings.transcribeApiKeyHint">sk-xxxxxxxx，点击可重新编辑；失焦后自动隐藏</div>
+            </div>
+          </div>
+          <div class="setting-row transcribe-actions">
+            <button id="btn-transcribe-conn" class="mini-btn" data-i18n="settings.transcribeConn">连接测试</button>
+            <button id="btn-transcribe-test" class="mini-btn" data-i18n="settings.transcribeFunc">功能测试</button>
+          </div>
+          <div id="transcribe-status" class="transcribe-status muted hidden"></div>
+        </div>
+        <div class="settings-group">
+          <div class="transcribe-warn">
+            <div class="transcribe-warn-title" data-i18n="transcribe.warnTitle">不建议用这个功能？</div>
+            <p class="transcribe-warn-text" data-i18n="transcribe.warnText">我们不建议你使用此功能以消耗额外的tokens（除非你非常富有），你完全可以使用豆包达到相同的效果，这仅仅让你浪费了复制/粘贴这几秒钟的时间，你只需要将以下文本发给豆包：</p>
+            <div class="transcribe-warn-box">
+              <textarea id="transcribe-system-prompt" class="transcribe-code" readonly spellcheck="false"></textarea>
+              <button id="btn-transcribe-copy" class="mini-btn" data-i18n="transcribe.copy">复制</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -406,9 +463,6 @@
           </div>
         </div>
         <div class="settings-group">
-          <div class="setting-row" data-donate-open style="cursor:pointer">
-            <div><div class="setting-name" data-i18n="settings.donate">赞赏支持</div><div class="setting-desc" data-i18n="settings.donateDesc">如果 dsh-remote 帮到了你，欢迎赞赏支持开发 ☕</div></div>
-          </div>
           <div class="setting-row">
             <div><div class="setting-name" data-i18n="settings.hostTitle">DSH 状态</div><div class="setting-desc" id="host-desc" data-i18n="settings.hostProbing">探测中…</div></div>
             <button id="btn-host-describe" class="mini-btn" data-i18n="settings.probe">探测</button>
@@ -431,6 +485,20 @@
     </section>
   </main>
 
+  <!-- prompt 转写·功能测试全屏界面 -->
+  <div id="view-transcribe-test" class="transcribe-overlay hidden" role="dialog" aria-modal="true" data-i18n-aria="transcribe.testTitle">
+    <div class="transcribe-test-head">
+      <button id="btn-transcribe-test-exit" class="mini-btn" data-i18n="transcribe.testExit">退出</button>
+      <span class="transcribe-test-head-title" data-i18n="transcribe.testTitle">功能测试</span>
+      <span class="transcribe-test-head-slot" id="transcribe-test-title"></span>
+    </div>
+    <div class="transcribe-test-label" data-i18n="transcribe.testRaw">原始文本</div>
+    <textarea id="transcribe-test-input" class="transcribe-test-area" data-i18n-placeholder="transcribe.testRawHint" spellcheck="false"></textarea>
+    <button id="btn-transcribe-test-convert" class="mini-btn transcribe-test-convert" data-i18n="transcribe.testConvert">转换</button>
+    <div class="transcribe-test-label" data-i18n="transcribe.testOutput">转写结果</div>
+    <textarea id="transcribe-test-output" class="transcribe-test-area" readonly data-i18n-placeholder="transcribe.testOutput"></textarea>
+  </div>
+
   <!-- 反馈底部菜单（非模态） -->
   <div id="feedback-backdrop" class="sheet-backdrop hidden"></div>
   <div id="feedback-sheet" class="sheet hidden" role="menu" data-i18n-aria="feedback.title">
@@ -440,17 +508,17 @@
       <span class="sheet-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
       <span class="sheet-item-body"><span class="sheet-item-name" data-i18n="feedback.write">写反馈</span><span class="sheet-item-desc" data-i18n="feedback.writeDesc">App 内直接提交</span></span>
     </button>
-    <a class="sheet-item primary" href="https://github.com/Blank-not-black/dsh-Remote/issues" target="_blank" rel="noopener" role="menuitem">
+    <a class="sheet-item primary" href="https://github.com/produce123/dsh-Remote-mod/issues" target="_blank" rel="noopener" role="menuitem">
       <span class="sheet-ico"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8a8.01 8.01 0 0 0 5.47 7.59c.4.08.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></span>
       <span class="sheet-item-body"><span class="sheet-item-name">GitHub Issues</span><span class="sheet-item-desc" data-i18n="feedback.githubDesc">反馈 bug / 提建议</span></span>
     </a>
-    <a class="sheet-item" href="https://gitee.com/Blankneverfails/dsh-Remote/issues" target="_blank" rel="noopener" role="menuitem">
-      <span class="sheet-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="6"/><path d="M7.5 13.5 7 19a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l-.5-5.5"/><circle cx="10" cy="8.6" r=".5" fill="currentColor" stroke="none"/><circle cx="14" cy="8.6" r=".5" fill="currentColor" stroke="none"/><path d="M11 10.8c.6.5 1.4.5 2 0"/></svg></span>
-      <span class="sheet-item-body"><span class="sheet-item-name">Gitee 反馈</span><span class="sheet-item-desc" data-i18n="feedback.giteeDesc">国内镜像，无需代理</span></span>
-    </a>
-    <a class="sheet-item" href="https://space.bilibili.com/419009275/dynamic" target="_blank" rel="noopener" role="menuitem">
+    <a class="sheet-item" href="https://space.bilibili.com/3546916338010193/dynamic" target="_blank" rel="noopener" role="menuitem">
       <span class="sheet-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="6" width="17" height="11" rx="2"/><path d="M8.5 3.5v3M15.5 3.5v3"/><circle cx="9.2" cy="10.6" r=".5" fill="currentColor" stroke="none"/><circle cx="14.8" cy="10.6" r=".5" fill="currentColor" stroke="none"/><path d="M9.5 14c1.4 1 3.6 1 5 0"/></svg></span>
       <span class="sheet-item-body"><span class="sheet-item-name">B站交流</span><span class="sheet-item-desc" data-i18n="feedback.biliDesc">UP 动态页交流</span></span>
+    </a>
+    <a class="sheet-item" href="mailto:p2128887242@outlook.com" target="_blank" rel="noopener" role="menuitem">
+      <span class="sheet-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></span>
+      <span class="sheet-item-body"><span class="sheet-item-name">邮箱</span><span class="sheet-item-desc" data-i18n="feedback.emailDesc">直接写信给我</span></span>
     </a>
     <button class="sheet-item" id="btn-copy-link" role="menuitem">
       <span class="sheet-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="3" width="12" height="12" rx="2"/><path d="M16 8h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1v-3"/></svg></span>
@@ -592,20 +660,6 @@
       <div id="theme-options" class="theme-panel-list"></div>
       <div class="modal-actions">
         <button id="theme-close" class="btn subtle" data-i18n="theme.close">关闭</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 赞赏支持模态 -->
-  <div id="modal-donate" class="modal hidden" role="dialog" aria-modal="true">
-    <div class="modal-card">
-      <div class="modal-title" data-i18n="settings.donate">赞赏支持</div>
-      <div class="modal-body donate-body">
-        <img src="donate.png" alt="" class="donate-img" style="display:block;margin:0 auto;max-width:100%;max-height:60vh;border-radius:8px">
-        <p class="donate-thanks" data-i18n="settings.donateThanks" style="text-align:center;margin-top:12px">感谢你的支持 ☕</p>
-      </div>
-      <div class="modal-actions">
-        <button id="donate-close" class="btn subtle" data-i18n="modal.close">关闭</button>
       </div>
     </div>
   </div>
@@ -794,7 +848,6 @@
         'settings.groupNotify': '通知', 'settings.groupNotifyDesc': '通知、提醒、后台轮询',
         'settings.groupTheme': '皮肤', 'settings.groupThemeDesc': '配色主题',
         'settings.groupAbout': '关于', 'settings.groupAboutDesc': 'DSH 状态、检查更新',
-        'settings.donate': '赞赏支持', 'settings.donateDesc': '如果 dsh-remote 帮到了你，欢迎赞赏支持开发 ☕', 'settings.donateThanks': '感谢你的支持 ☕',
         'settings.back': '‹ 返回',
         'settings.servers': '服务器地址（可多个）', 'settings.speedTest': '测速', 'settings.add': '添加',
         'settings.scanTitle': '扫码连接', 'settings.scanDesc': '拍照/相册本地解码（无谷歌服务依赖）；也可系统相机扫码或手动粘贴', 'settings.scan': '扫码',
@@ -822,6 +875,21 @@
         'presets.confirmDelete': '删除预设「{name}」？', 'presets.saved': '预设已保存', 'presets.deleted': '预设已删除',
         'settings.toolsTitle': '显示工具调用', 'settings.toolsDesc': '关闭后隐藏 🔧/📦 工具调用与结果',
         'settings.mobileEnterTitle': '手机回车行为', 'settings.mobileEnterDesc': '选择手机端按 Enter 时换行或直接发送', 'settings.mobileEnterNewline': '回车换行', 'settings.mobileEnterSend': '回车发送',
+        'settings.transcribeTitle': 'prompt 转写', 'settings.transcribeDesc': '用 OpenAI 兼容 API 把输入内容改写为条理清晰的 prompt', 'settings.transcribeOn': 'prompt 转写', 'settings.transcribeOnDesc': '开启后，全屏输入框右上角出现「转写」按钮',
+        'settings.transcribeApiUrl': 'API 地址', 'settings.transcribeApiUrlHint': 'OpenAI 兼容：https://api.openai.com/v1',
+        'settings.transcribeModel': '模型', 'settings.transcribeModelHint': '任意已开通的模型，如 gpt-4o-mini',
+        'settings.transcribeApiKey': 'API 密钥', 'settings.transcribeApiKeyHint': 'sk-xxxxxxxx，点击可重新编辑；失焦后自动隐藏',
+        'settings.transcribeConn': '连接测试', 'settings.transcribeFunc': '功能测试',
+        'transcribe.on': 'prompt 转写已开启', 'transcribe.off': 'prompt 转写已关闭',
+        'transcribe.statusConnecting': '连接测试中…', 'transcribe.statusConnOk': '连接成功，延迟 {ms}ms', 'transcribe.statusConnFail': '连接失败：{msg}',
+        'transcribe.warnTitle': '不建议用这个功能？',
+        'transcribe.warnText': '我们不建议你使用此功能以消耗额外的tokens（除非你非常富有），你完全可以使用豆包达到相同的效果，这仅仅让你浪费了复制/粘贴这几秒钟的时间，你只需要将以下文本发给豆包：',
+        'transcribe.copy': '复制', 'transcribe.copied': 'System Prompt 已复制', 'transcribe.copyFailed': '复制失败，请手动复制',
+        'transcribe.testTitle': '功能测试', 'transcribe.testExit': '退出', 'transcribe.testRaw': '原始文本', 'transcribe.testOutput': '转写结果',
+        'transcribe.testRawHint': '粘贴一段口语化、没条理的文本…', 'transcribe.testConvert': '转换', 'transcribe.testConverting': '转换中…',
+        'transcribe.testEmpty': '请先输入原始文本', 'transcribe.testDone': '转换完成', 'transcribe.testFailed': '转换失败：{msg}',
+        'transcribe.needText': '请输入要转写的文本', 'transcribe.timeout': '请求超时（30 秒），请重试', 'transcribe.networkError': '网络错误，请检查网络或 API 地址', 'transcribe.noContent': '接口未返回有效文本', 'transcribe.configIncomplete': '请先完成 API 地址 / 模型 / 密钥配置',
+        'composer.transcribe': '转写', 'composer.transcribing': '转写中…', 'composer.transcribeDone': '转写完成', 'composer.transcribeFail': '转写失败：{msg}',
         'settings.langTitle': '语言 / Language', 'settings.langDesc': '界面语言，跟随系统或手动切换',
         'settings.themeTitle': '皮肤', 'settings.themeDesc': '默认深空 / 落日 / 易北爱乐厅 / 草原孤塔',
         'theme.default': '默认深空', 'theme.dark': '落日', 'theme.light': '易北爱乐厅', 'theme.neutral': '草原孤塔',
@@ -831,9 +899,9 @@
         'settings.dshControlTitle': '远程启动 DSH', 'settings.dshControlProbing': '检查本机服务状态…', 'settings.dshRunning': '运行中', 'settings.dshStopped': '已停止', 'settings.dshUnsupported': '当前系统未配置可控的 DSH 服务', 'settings.dshStart': '启动', 'settings.dshRestart': '重启', 'settings.dshStarting': '正在{action} DSH…', 'settings.dshStarted': 'DSH 已{action}', 'settings.dshFailed': 'DSH 操作失败：{msg}',
         'settings.hostDesc': 'DSH {version} · {cwd} · 附加会话 {n}',
         'settings.updateTitle': '检查更新', 'settings.updateLoading': '加载中…', 'settings.downloadUpdate': '下载并安装更新', 'settings.check': '检查',
-        'settings.feedbackTitle': '反馈渠道', 'settings.feedbackDesc': 'GitHub / Gitee / B站：反馈 bug、提建议、唠嗑',
-        'feedback.title': '反馈', 'feedback.githubDesc': '反馈 bug / 提建议', 'feedback.giteeDesc': '国内镜像，无需代理',
-        'feedback.biliDesc': 'UP 动态页交流', 'feedback.copyLink': '复制项目链接', 'feedback.copyDesc': '手动分享给朋友',
+        'settings.feedbackTitle': '反馈渠道', 'settings.feedbackDesc': 'GitHub / B站 / 邮箱：反馈 bug、提建议、唠嗑',
+        'feedback.title': '反馈', 'feedback.githubDesc': '反馈 bug / 提建议',
+        'feedback.biliDesc': 'UP 动态页交流', 'feedback.emailDesc': '直接写信给我', 'feedback.copyLink': '复制项目链接', 'feedback.copyDesc': '手动分享给朋友',
         'feedback.copied': '项目链接已复制', 'feedback.copyFailed': '复制失败，请手动复制',
         'feedback.write': '写反馈', 'feedback.writeDesc': 'App 内直接提交', 'feedback.modalTitle': '写反馈',
         'feedback.typeBug': 'Bug', 'feedback.typeSuggestion': '建议', 'feedback.typeOther': '其他',
@@ -991,7 +1059,6 @@
         'settings.groupNotify': 'Notifications', 'settings.groupNotifyDesc': 'Notifications, reminders, background polling',
         'settings.groupTheme': 'Theme', 'settings.groupThemeDesc': 'Color themes',
         'settings.groupAbout': 'About', 'settings.groupAboutDesc': 'DSH status, updates',
-        'settings.donate': 'Support', 'settings.donateDesc': 'If dsh-remote has been helpful to you, feel free to support development with a coffee ☕', 'settings.donateThanks': 'Thanks for your support ☕',
         'settings.back': '‹ Back',
         'settings.servers': 'Servers (one or more)', 'settings.speedTest': 'Test', 'settings.add': 'Add',
         'settings.scanTitle': 'Scan to pair', 'settings.scanDesc': 'Photo/gallery QR decoding on device (no Google services); system camera or manual paste also work', 'settings.scan': 'Scan',
@@ -1019,6 +1086,21 @@
         'presets.confirmDelete': 'Delete preset "{name}"?', 'presets.saved': 'Preset saved', 'presets.deleted': 'Preset deleted',
         'settings.toolsTitle': 'Show tool calls', 'settings.toolsDesc': 'Hide 🔧/📦 tool calls and results when off',
         'settings.mobileEnterTitle': 'Mobile Enter behavior', 'settings.mobileEnterDesc': 'Choose whether Enter inserts a newline or sends', 'settings.mobileEnterNewline': 'Enter = newline', 'settings.mobileEnterSend': 'Enter = send',
+        'settings.transcribeTitle': 'Prompt transcribe', 'settings.transcribeDesc': 'Rewrite the composer text into a clean prompt via an OpenAI-compatible API', 'settings.transcribeOn': 'Prompt transcribe', 'settings.transcribeOnDesc': 'When on, a "Transcribe" button appears in the fullscreen composer',
+        'settings.transcribeApiUrl': 'API base URL', 'settings.transcribeApiUrlHint': 'OpenAI-compatible: https://api.openai.com/v1',
+        'settings.transcribeModel': 'Model', 'settings.transcribeModelHint': 'Any enabled model, e.g. gpt-4o-mini',
+        'settings.transcribeApiKey': 'API key', 'settings.transcribeApiKeyHint': 'sk-xxxxxxxx · tap to re-edit; auto-hidden after blur',
+        'settings.transcribeConn': 'Test connection', 'settings.transcribeFunc': 'Test function',
+        'transcribe.on': 'Prompt transcribe enabled', 'transcribe.off': 'Prompt transcribe disabled',
+        'transcribe.statusConnecting': 'Testing connection…', 'transcribe.statusConnOk': 'Connected, latency {ms}ms', 'transcribe.statusConnFail': 'Connection failed: {msg}',
+        'transcribe.warnTitle': 'Why not recommended?',
+        'transcribe.warnText': 'We do not recommend using this feature to burn extra tokens (unless you are very rich). Doubao can do exactly the same for free — this only saves you the few seconds of copy/paste. Just send the text below to Doubao:',
+        'transcribe.copy': 'Copy', 'transcribe.copied': 'System prompt copied', 'transcribe.copyFailed': 'Copy failed, please copy manually',
+        'transcribe.testTitle': 'Function test', 'transcribe.testExit': 'Exit', 'transcribe.testRaw': 'Raw text', 'transcribe.testOutput': 'Output',
+        'transcribe.testRawHint': 'Paste some colloquial, unstructured text here…', 'transcribe.testConvert': 'Convert', 'transcribe.testConverting': 'Converting…',
+        'transcribe.testEmpty': 'Enter some raw text first', 'transcribe.testDone': 'Converted', 'transcribe.testFailed': 'Conversion failed: {msg}',
+        'transcribe.needText': 'Enter some text to transcribe', 'transcribe.timeout': 'Request timed out (30s), try again', 'transcribe.networkError': 'Network error, check your network or the API URL', 'transcribe.noContent': 'The API returned no usable text', 'transcribe.configIncomplete': 'Fill in the API URL / model / key first',
+        'composer.transcribe': 'Transcribe', 'composer.transcribing': 'Transcribing…', 'composer.transcribeDone': 'Transcribed', 'composer.transcribeFail': 'Transcribe failed: {msg}',
         'settings.langTitle': 'Language / 语言', 'settings.langDesc': 'UI language, follows system or switch manually',
         'settings.themeTitle': 'Theme', 'settings.themeDesc': 'Default deep space / Sunset / Elbphilharmonie / Prairie Tower',
         'theme.default': 'Default', 'theme.dark': 'Sunset', 'theme.light': 'Elbphilharmonie', 'theme.neutral': 'Prairie Tower',
@@ -1028,9 +1110,9 @@
         'settings.dshControlTitle': 'Remote DSH control', 'settings.dshControlProbing': 'Checking local service…', 'settings.dshRunning': 'Running', 'settings.dshStopped': 'Stopped', 'settings.dshUnsupported': 'No controllable DSH service is configured', 'settings.dshStart': 'Start', 'settings.dshRestart': 'Restart', 'settings.dshStarting': '{action}ing DSH…', 'settings.dshStarted': 'DSH {action}ed', 'settings.dshFailed': 'DSH operation failed: {msg}',
         'settings.hostDesc': 'DSH {version} · {cwd} · {n} attached sessions',
         'settings.updateTitle': 'Check for updates', 'settings.updateLoading': 'Loading…', 'settings.downloadUpdate': 'Download & install update', 'settings.check': 'Check',
-        'settings.feedbackTitle': 'Feedback', 'settings.feedbackDesc': 'GitHub / Gitee / Bilibili: report bugs, suggest features, or just chat',
-        'feedback.title': 'Feedback', 'feedback.githubDesc': 'Report bugs · suggest features', 'feedback.giteeDesc': 'Mirror in China, no proxy needed',
-        'feedback.biliDesc': 'Chat on the UP\'s Bilibili page', 'feedback.copyLink': 'Copy project link', 'feedback.copyDesc': 'Share it manually',
+        'settings.feedbackTitle': 'Feedback', 'settings.feedbackDesc': 'GitHub / Bilibili / Email: report bugs, suggest features, or just chat',
+        'feedback.title': 'Feedback', 'feedback.githubDesc': 'Report bugs · suggest features',
+        'feedback.biliDesc': 'Chat on the UP\'s Bilibili page', 'feedback.emailDesc': 'Email me directly', 'feedback.copyLink': 'Copy project link', 'feedback.copyDesc': 'Share it manually',
         'feedback.copied': 'Project link copied', 'feedback.copyFailed': 'Copy failed, copy manually',
         'feedback.write': 'Write feedback', 'feedback.writeDesc': 'Submit from the app', 'feedback.modalTitle': 'Write feedback',
         'feedback.typeBug': 'Bug', 'feedback.typeSuggestion': 'Suggestion', 'feedback.typeOther': 'Other',
@@ -1059,6 +1141,7 @@
   <script src="theme.js"></script>
   <script src="md.js"></script>
   <script src="history-core.js"></script>
+  <script src="transcribe-core.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

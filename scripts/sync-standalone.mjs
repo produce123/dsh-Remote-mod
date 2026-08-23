@@ -7,6 +7,8 @@
  *   - 设置 DSH_RELEASE_DEPLOY_KEY(独立仓库 deploy key 的私钥)时走 SSH, 推荐用于 CI
  *   - 未设置时走 https, 依赖本机 gh 凭据助手
  * 注意: 仓库元数据(README/package.json.repository)永远使用无认证的公开 URL。
+ * mod fork 说明: 本 fork 不向该上游独立仓库推送 —— CI 中对应步骤被 DSH_RELEASE_DEPLOY_KEY
+ * secret 门控跳过(release-build.yml), 本脚本仅保留供上游流程参考, fork 内勿运行。
  */
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
