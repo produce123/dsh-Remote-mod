@@ -79,6 +79,12 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          # 无 NPM_TOKEN 时跳过, 插件以 tgz + GitHub Releases 交付(与 mod fork 一致);
+          # 注: secrets 不能出现在 step 的 if: 表达式, 只能在 env 中使用, 故脚本内检查。
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "未配置 NPM_TOKEN, 跳过 npm 发布"
+            exit 0
+          fi
           PKG_VER=$(node -p "require('./package.json').version")
           NPM_TAG=latest
           if [[ "$PKG_VER" == *-* ]]; then NPM_TAG=next; fi
