@@ -1574,6 +1574,161 @@ async function validatePollVote(payload) {
   return result
 }
 
+/* ---------------- prompt 转写代理 ---------------- */
+// 客户端直连第三方 OpenAI 兼容 API 会被 Capacitor WebView 的 CORS 拦截且无法统一
+// 错误处理, 故经本网关转发: 网关鉴权(token) → 带上用户的第三方 key 请求 provider。
+// key 只在用户本机网关与 provider 之间传递, 与 admin token 同信任模型, 不落盘不记日志。
+const TRANSCRIBE_PROXY_TIMEOUT_MS = 120000
+
+function serveTranscribe(req, res, url) {
+  cors(res)
+  // 跨域预检: App/Capacitor(http://localhost)与 DSH 插件页等跨源环境必须先发 OPTIONS,
+  // 不应答 204 会被浏览器当作预检失败拦截发请求, 表现为"网络错误,请检查网络或API地址"。
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204)
+    res.end()
+    return
+  }
+  if (req.method !== 'POST') {
+    res.writeHead(405, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ error: 'method not allowed' }))
+    return
+  }
+  if (!authorized(req, url)) {
+    res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ error: 'unauthorized' }))
+    return
+  }
+  let body = ''
+  let oversized = false
+  req.on('data', (c) => {
+    body += c
+    if (body.length > 64 * 1024) { oversized = true; req.destroy() }
+  })
+  req.on('end', async () => {
+    if (oversized) {
+      res.writeHead(413, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: 'payload too large' }))
+      return
+    }
+    let payload
+    try { payload = JSON.parse(body || '{}') } catch {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: 'invalid json' }))
+      return
+    }
+    const { base, model, key, test, messages } = payload
+    const baseOk = typeof base === 'string' && /^https?:\/\//i.test(base) && base.length <= 2048
+    const modelOk = typeof model === 'string' && model.length > 0 && model.length <= 256
+    const keyOk = typeof key === 'string' && key.length > 0 && key.length <= 512
+    if (!baseOk || !modelOk || !keyOk) {
+      res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ error: 'invalid config' }))
+      return
+    }
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), TRANSCRIBE_PROXY_TIMEOUT_MS)
+    // 客户端断连(响应流提前关闭)时中止上游请求; 正常完成后的 close 是无害的空 abort。
+    // 注意不能用 req.on('close'): keep-alive 下请求体读完就会触发, 会把在途 fetch 误杀。
+    res.on('close', () => ctrl.abort())
+    try {
+      if (test) {
+        // 连接测试: 先探 GET /models; 部分 OpenAI 兼容服务不实现该端点,
+        // 回退到一次最小 chat 探测, 避免"正确 API 却报连不上"。探测超时 15s。
+        const t0 = Date.now()
+        const probeTimer = setTimeout(() => ctrl.abort(), 15000)
+        const models = await fetch(base + '/models', {
+          headers: { authorization: 'Bearer ' + key, accept: 'application/json' },
+          signal: ctrl.signal,
+        }).catch(() => null)
+        if (models?.ok) {
+          clearTimeout(timer); clearTimeout(probeTimer)
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ ok: true, via: 'models', status: models.status, ms: Math.round(Date.now() - t0) }))
+          return
+        }
+        const chat = await fetch(base + '/chat/completions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json', authorization: 'Bearer ' + key },
+          body: JSON.stringify({ model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1, stream: false }),
+          signal: ctrl.signal,
+        }).catch(() => null)
+        clearTimeout(timer); clearTimeout(probeTimer)
+        const ms = Math.round(Date.now() - t0)
+        if (!chat) {
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ ok: false, error: 'network', ms, modelsStatus: models?.status || 0 }))
+          return
+        }
+        if (!chat.ok) {
+          const detail = await chat.text().catch(() => '')
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+          res.end(JSON.stringify({ ok: false, error: String(chat.status), status: chat.status, ms, msg: detail.slice(0, 300), modelsStatus: models?.status || 0 }))
+          return
+        }
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ ok: true, via: 'chat', status: chat.status, ms, model }))
+        return
+      }
+      const msgsOk = Array.isArray(messages) && messages.length > 0 && messages.every((m) =>
+        m && typeof m.role === 'string' && typeof m.content === 'string' &&
+        m.content.length > 0 && m.content.length <= 30000 && messages.length <= 8
+      )
+      if (!msgsOk) {
+        res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: 'messages required' }))
+        return
+      }
+      const up = await fetch(base + '/chat/completions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'text/event-stream', authorization: 'Bearer ' + key },
+        body: JSON.stringify({ model, stream: true, messages }),
+        signal: ctrl.signal
+      }).catch(() => null)
+      if (!up) {
+        res.writeHead(502, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: 'network', msg: '无法连接模型服务' }))
+        return
+      }
+      if (!up.ok) {
+        const detail = await up.text().catch(() => '')
+        clearTimeout(timer)
+        res.writeHead(up.status, { 'content-type': 'application/json; charset=utf-8' })
+        // 透传 provider 状态码与首段错误文本, 客户端用 statusMessage 映射成用户文案
+        res.end(JSON.stringify({ error: String(up.status), msg: detail.slice(0, 300) }))
+        return
+      }
+      if ((up.headers.get('content-type') || '').includes('application/json')) {
+        // 极少数服务端忽略 stream:true 返回普通 JSON: 原样透传, 客户端按 JSON 分支解析
+        clearTimeout(timer)
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
+        for await (const chunk of up.body) { if (!res.destroyed) res.write(chunk) }
+        res.end()
+        return
+      }
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache',
+        'x-accel-buffering': 'no'
+      })
+      for await (const chunk of up.body) {
+        if (!res.destroyed) res.write(chunk)
+        else { ctrl.abort(); break }
+      }
+      res.end()
+      clearTimeout(timer)
+    } catch {
+      clearTimeout(timer)
+      if (!res.headersSent) {
+        res.writeHead(502, { 'content-type': 'application/json; charset=utf-8' })
+        res.end(JSON.stringify({ error: 'proxy error' }))
+      } else {
+        res.destroy()
+      }
+    }
+  })
+}
+
 function serveFeedback(req, res, url) {
   cors(res)
   if (req.method === 'OPTIONS') {
@@ -3000,6 +3155,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/fs' || url.pathname.startsWith('/fs/')) return await serveFs(req, res, url)
     if (url.pathname === '/workbench' || url.pathname.startsWith('/workbench/')) return serveWorkbench(req, res, url)
     if (url.pathname === '/feedback') return serveFeedback(req, res, url)
+    if (url.pathname === '/transcribe') return serveTranscribe(req, res, url)
     if (url.pathname.startsWith('/admin/api')) return serveAdminApi(req, res, url)
     if (url.pathname.startsWith('/stats')) return serveStats(req, res, url)
     if (url.pathname === '/api/ws-ticket') return serveWsTicket(req, res, url)

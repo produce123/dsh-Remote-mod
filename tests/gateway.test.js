@@ -23,6 +23,7 @@ const os = require('node:os')
 const path = require('node:path')
 const net = require('node:net')
 const { once } = require('node:events')
+const { pathToFileURL } = require('node:url')
 
 const ROOT = path.join(__dirname, '..')
 const GATEWAY = path.join(ROOT, 'gateway.js')
@@ -1043,3 +1044,313 @@ test('中央公告首次不可达时回退内置公告', async () => {
 // 说明：版本比较函数 cmpVersion/parseVersion 位于 public/app.js（浏览器端），
 // 不在 gateway.js 进程内；按任务约束不为它引入 vm/DOM 模拟，因此这里只覆盖
 // 网关侧的 /update.json 版本兼容输出（rc 后缀剥离逻辑）。
+test('插件 /remote/transcribe 代理到本地网关（SSE 透传）', async () => {
+  const savedGateway = process.env.DSH_REMOTE_GATEWAY
+  const savedToken = process.env.DSH_REMOTE_TOKEN
+  let seenAuth = null
+  const mockGateway = http.createServer((req, res) => {
+    let b = ''
+    req.on('data', (c) => { b += c })
+    req.on('end', () => {
+      if (req.url === '/transcribe' && req.method === 'POST') {
+        seenAuth = req.headers.authorization || null
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+        res.write('data: {"choices":[{"delta":{"content":"代理"}}]}\n\n')
+        res.end('data: [DONE]\n\n')
+        return
+      }
+      res.writeHead(404)
+      res.end()
+    })
+  })
+  const gwPort = await new Promise((resolve) => mockGateway.listen(0, '127.0.0.1', () => resolve(mockGateway.address().port)))
+  try {
+    process.env.DSH_REMOTE_GATEWAY = `http://127.0.0.1:${gwPort}`
+    process.env.DSH_REMOTE_TOKEN = 'plugin-token-xyz'
+    const mod = await import(pathToFileURL(path.join(ROOT, 'packages/plugin/index.mjs')).href)
+    const { serveStatic } = mod
+    const { Readable } = require('node:stream')
+
+    const req = Readable.from([JSON.stringify({ test: true, base: 'http://x', model: 'm', key: 'k' })])
+    req.method = 'POST'
+    req.url = '/remote/transcribe'
+    req.headers = { 'content-type': 'application/json' }
+    let written = ''
+    const res = {
+      writeHead(status, headers) { this.status = status; this.headers = headers },
+      write(c) { written += Buffer.from(c).toString('utf8') },
+      end() {},
+    }
+    await serveStatic(req, res, {})
+    assert.equal(res.status, 200)
+    assert.match(res.headers['content-type'] || '', /text\/event-stream/)
+    assert.match(written, /代理/)
+    assert.match(written, /\[DONE\]/)
+    assert.equal(seenAuth, 'Bearer plugin-token-xyz')
+
+    // OPTIONS 预检放行
+    const optReq = Readable.from([])
+    optReq.method = 'OPTIONS'
+    optReq.url = '/remote/transcribe'
+    optReq.headers = { origin: 'http://localhost:8080' }
+    const optRes = { writeHead(status, headers) { this.status = status; this.headers = headers }, end() {} }
+    await serveStatic(optReq, optRes, {})
+    assert.equal(optRes.status, 204)
+  } finally {
+    if (savedGateway === undefined) delete process.env.DSH_REMOTE_GATEWAY
+    else process.env.DSH_REMOTE_GATEWAY = savedGateway
+    if (savedToken === undefined) delete process.env.DSH_REMOTE_TOKEN
+    else process.env.DSH_REMOTE_TOKEN = savedToken
+    mockGateway.closeAllConnections?.()
+    await new Promise((resolve) => mockGateway.close(resolve))
+  }
+})
+
+test('转写代理：鉴权、配置校验、test 模式与 SSE 流式透传', async () => {
+  // 存根 provider：记录收到的鉴权头/请求体，返回 OpenAI 兼容响应
+  const seen = { auth: null, modelsAuth: null, streamFlag: null, body: null }
+  const provider = http.createServer((req, res) => {
+    if (req.method === 'GET' && req.url === '/models') {
+      seen.modelsAuth = req.headers.authorization || null
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ data: [{ id: 'x' }] }))
+      return
+    }
+    if (req.method === 'POST' && req.url === '/chat/completions') {
+      seen.auth = req.headers.authorization || null
+      let b = ''
+      req.on('data', (c) => { b += c })
+      req.on('end', () => {
+        seen.body = JSON.parse(b)
+        seen.streamFlag = seen.body.stream
+        if (seen.body.model === 'fail-model') {
+          res.writeHead(401, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ error: { message: 'bad key', code: 401 } }))
+          return
+        }
+        if (seen.body.stream) {
+          res.writeHead(200, { 'content-type': 'text/event-stream' })
+          res.write('data: {"choices":[{"delta":{"content":"整理"}}]}\n\n')
+          res.write('data: {"choices":[{"delta":{"content":"结果"}}]}\n\n')
+          res.end('data: [DONE]\n\n')
+        } else {
+          res.writeHead(200, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ choices: [{ message: { content: 'non-stream' } }] }))
+        }
+      })
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  })
+  const providerPort = await new Promise((resolve) => provider.listen(0, '127.0.0.1', () => resolve(provider.address().port)))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-remote-transcribe-test-'))
+  const port = await getFreePort()
+  const tbase = `http://127.0.0.1:${port}`
+  const child = spawn(process.execPath, [GATEWAY], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      HOME: root,
+      USERPROFILE: root,
+      PORT: String(port),
+      HOST: '127.0.0.1',
+      DSH_UPSTREAM: 'http://127.0.0.1:1', // 不可达上游: 只测网关本地 /transcribe
+      TOKEN,
+      TOKEN_FILE: path.join(root, 'token'),
+      DSH_REMOTE_FS_ROOT: root,
+      DSH_REMOTE_NOTES: path.join(root, 'notes.json'),
+      UPDATE_CHECK_URL: 'http://127.0.0.1:1/update',
+      UPDATE_INTERVAL_MS: '3600000',
+      UPDATE_PROXY: '',
+      HTTP_PROXY: '',
+      HTTPS_PROXY: '',
+      ALL_PROXY: '',
+      NO_PROXY: '*'
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  child.stdout.on('data', () => {})
+  child.stderr.on('data', () => {})
+  const hdrs = { 'content-type': 'application/json', authorization: 'Bearer ' + TOKEN }
+  const payload = (over) => Object.assign({
+    base: `http://127.0.0.1:${providerPort}`,
+    model: 'gpt-x',
+    key: 'sk-test',
+    messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: '原文' }]
+  }, over)
+  try {
+    await waitForHealth(tbase)
+
+    // 无网关鉴权 → 401
+    let res = await fetch(tbase + '/transcribe', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload({})) })
+    assert.equal(res.status, 401)
+
+    // CORS 预检: App(Capacitor http://localhost)等跨源环境 POST 前先发 OPTIONS,
+    // 必须 204 放行, 否则浏览器拦截请求(用户侧"网络错误,请检查网络或API地址")
+    res = await fetch(tbase + '/transcribe', {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'http://localhost:8080',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'authorization, content-type',
+      }
+    })
+    assert.equal(res.status, 204)
+    assert.match(res.headers.get('access-control-allow-origin') || '', /localhost/)
+    assert.match(res.headers.get('access-control-allow-headers') || '', /authorization/)
+
+    // base 非 http(s) → 400
+    res = await fetch(tbase + '/transcribe', { method: 'POST', headers: hdrs, body: JSON.stringify(payload({ base: 'file:///etc/passwd' })) })
+    assert.equal(res.status, 400)
+
+    // test 模式: {ok:true, ms} 且 provider 收到 Bearer key
+    res = await fetch(tbase + '/transcribe', {
+      method: 'POST', headers: hdrs,
+      body: JSON.stringify({ test: true, base: payload({}).base, model: 'gpt-x', key: 'sk-test' })
+    })
+    assert.equal(res.status, 200)
+    const testData = await res.json()
+    assert.equal(testData.ok, true)
+    assert.ok(Number.isInteger(testData.ms) && testData.ms >= 0)
+    assert.equal(seen.modelsAuth, 'Bearer sk-test')
+
+    // 连接测试回退: 不实现 GET /models 的兼容服务, 回退到最小 chat 探测
+    const provider2 = http.createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/models') { res.writeHead(404); res.end(); return }
+      if (req.method === 'POST' && req.url === '/chat/completions') {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }))
+        return
+      }
+      res.writeHead(404); res.end()
+    })
+    const provider2Port = await new Promise((resolve) => provider2.listen(0, '127.0.0.1', () => resolve(provider2.address().port)))
+    res = await fetch(tbase + '/transcribe', {
+      method: 'POST', headers: hdrs,
+      body: JSON.stringify({ test: true, base: `http://127.0.0.1:${provider2Port}`, model: 'gpt-x', key: 'sk-test' })
+    })
+    assert.equal(res.status, 200)
+    const fallback = await res.json()
+    assert.equal(fallback.ok, true, '不实现 /models 的服务应回退到 chat 探测成功: ' + JSON.stringify(fallback))
+    assert.equal(fallback.via, 'chat')
+
+    // 模型服务完全不可达 → ok:false error:'network'
+    res = await fetch(tbase + '/transcribe', {
+      method: 'POST', headers: hdrs,
+      body: JSON.stringify({ test: true, base: 'http://127.0.0.1:1', model: 'gpt-x', key: 'sk-test' })
+    })
+    assert.equal(res.status, 200)
+    const netFail = await res.json()
+    assert.equal(netFail.ok, false)
+    assert.equal(netFail.error, 'network')
+    provider2.closeAllConnections?.()
+    await new Promise((resolve) => provider2.close(resolve))
+
+    // 流式代理: SSE 透传 delta 与 [DONE], provider 收到 stream:true 与原文
+    res = await fetch(tbase + '/transcribe', { method: 'POST', headers: hdrs, body: JSON.stringify(payload({})) })
+    assert.equal(res.status, 200)
+    assert.match(res.headers.get('content-type') || '', /text\/event-stream/)
+    const body = await res.text()
+    assert.match(body, /整理/)
+    assert.match(body, /结果/)
+    assert.match(body, /\[DONE\]/)
+    assert.equal(seen.streamFlag, true)
+    assert.equal(seen.auth, 'Bearer sk-test')
+    assert.equal(seen.body.messages[1].content, '原文')
+
+    // provider 401 → 网关透传状态码与错误文本
+    res = await fetch(tbase + '/transcribe', { method: 'POST', headers: hdrs, body: JSON.stringify(payload({ model: 'fail-model' })) })
+    assert.equal(res.status, 401)
+    assert.match(String((await res.json()).msg), /bad key/)
+  } finally {
+    if (child.exitCode === null) child.kill('SIGTERM')
+    await Promise.race([
+      once(child, 'exit').then(() => {}),
+      new Promise((r) => setTimeout(r, 2000))
+    ])
+    provider.closeAllConnections?.()
+    await new Promise((resolve) => provider.close(resolve))
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('转写代理: 慢速分块 SSE 实时透传(首块先到, 不等全部完成)', async () => {
+  // provider 每 180ms 发一块, 共 5 块(总时长约 900ms);
+  // 若网关缓冲整流, 客户端要等 ~900ms 才拿到第一块; 流式则 ~180ms 即到。
+  const provider = http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url === '/chat/completions') {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+      const parts = ['块一', '块二', '块三', '块四', '块五']
+      let i = 0
+      const timer = setInterval(() => {
+        if (i < parts.length) {
+          res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: parts[i] } }] }) + '\n\n')
+          i++
+        } else { clearInterval(timer); res.end('data: [DONE]\n\n') }
+      }, 180)
+      return
+    }
+    res.writeHead(404); res.end()
+  })
+  const providerPort = await new Promise((resolve) => provider.listen(0, '127.0.0.1', () => resolve(provider.address().port)))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-remote-transcribe-stream-'))
+  const port = await getFreePort()
+  const tbase = `http://127.0.0.1:${port}`
+  const child = spawn(process.execPath, [GATEWAY], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      HOME: root, USERPROFILE: root,
+      PORT: String(port), HOST: '127.0.0.1',
+      DSH_UPSTREAM: 'http://127.0.0.1:1',
+      TOKEN, TOKEN_FILE: path.join(root, 'token'),
+      DSH_REMOTE_FS_ROOT: root,
+      UPDATE_CHECK_URL: 'http://127.0.0.1:1/update',
+      UPDATE_INTERVAL_MS: '3600000',
+      HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '', NO_PROXY: '*'
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  child.stdout.on('data', () => {})
+  child.stderr.on('data', () => {})
+  try {
+    await waitForHealth(tbase)
+    const t0 = Date.now()
+    const res = await fetch(tbase + '/transcribe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + TOKEN },
+      body: JSON.stringify({
+        base: `http://127.0.0.1:${providerPort}`, model: 'gpt-x', key: 'sk-test',
+        messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: '原文' }]
+      })
+    })
+    assert.equal(res.status, 200)
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    const first = await reader.read() // 阻塞到第一块网络数据到达
+    const firstAt = Date.now() - t0
+    let body = decoder.decode(first.value, { stream: true })
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      body += decoder.decode(value, { stream: true })
+    }
+    const total = Date.now() - t0
+    // 首块必须在全部完成前显著到达: 总时长约 900ms, 首块应 < 600ms(留余量)
+    assert.ok(firstAt < Math.min(600, total - 150), `首块应流式先到(首块=${firstAt}ms, 总=${total}ms)`)
+    assert.ok(total >= 700, `慢速 provider 总时长应约 900ms(实际=${total}ms), 证明未被缓冲吞并`)
+    assert.match(body, /块一/)
+    assert.match(body, /块五/)
+    assert.match(body, /\[DONE\]/)
+  } finally {
+    if (child.exitCode === null) child.kill('SIGTERM')
+    await Promise.race([
+      once(child, 'exit').then(() => {}),
+      new Promise((r) => setTimeout(r, 2000))
+    ])
+    provider.closeAllConnections?.()
+    await new Promise((resolve) => provider.close(resolve))
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})

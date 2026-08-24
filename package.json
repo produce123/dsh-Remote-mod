@@ -1,6 +1,6 @@
 {
   "name": "dsh-remote",
-  "version": "0.6.13",
+  "version": "0.6.14",
   "private": true,
   "dsh": {
     "bundle": {
@@ -15,7 +15,7 @@
     }
   },
   "description": "DSH 移动远程控制台: DSH 插件(内置网关自启停) + 独立网关 + Android App 一体",
-  "updateNotes": "0.6.13 正式版：新增首次连接 Doctor，集中检查 DSH 服务、远程网关、局域网地址、防火墙、终端配对和实时消息通道；网关控制台新增可选的独立设备密钥，支持设备备注、最近 IP、二维码、令牌轮换、复制和退出，共享令牌在启用后仅保留管理权限；手机端和桌面端支持实时思考内容，并为未声明推理档位的模型提供 low、high、max 三档选择；普通会话列表、工作区树和主页统计不再混入子代理内部会话；Android App 落后于网关版本时显示明确更新提醒；新增网关协议与能力协商并兼容旧网关，同时补充设备隔离、重启持久化、推理显示、会话过滤和版本差异回归测试。",
+  "updateNotes": "0.6.14：新增 prompt 转写功能（源自 mod 分支）——在会话全屏输入框右上角「转写」按钮，把口语化文本经 OpenAI 兼容 API 实时流式改写为条理清晰的 prompt：① 网关新增 /transcribe 代理（token 鉴权 + SSE 流式透传 + 连接测试含 /models 回退 chat 探测），DSH 插件 /remote 路径同样可用；② 转写进行中按钮变「停止」，可随时中止并保留已转写内容，退出全屏自动停止；③ 流式输出实时写入输入框（光标/滚动跟随最新增量），空闲 30s / 总 120s 超时保护，失败自动恢复原文；④ 设置页新增「prompt 转写」配置组（API 地址 / 模型 / 密钥掩码 / 连接测试 / 功能测试），密钥只在本机网关与 provider 间传递不落盘；⑤ 配套 7 项单元测试 + 网关 SSE 透传/慢速流式时序测试。\n0.6.13 正式版：新增首次连接 Doctor，集中检查 DSH 服务、远程网关、局域网地址、防火墙、终端配对和实时消息通道；网关控制台新增可选的独立设备密钥，支持设备备注、最近 IP、二维码、令牌轮换、复制和退出，共享令牌在启用后仅保留管理权限；手机端和桌面端支持实时思考内容，并为未声明推理档位的模型提供 low、high、max 三档选择；普通会话列表、工作区树和主页统计不再混入子代理内部会话；Android App 落后于网关版本时显示明确更新提醒；新增网关协议与能力协商并兼容旧网关，同时补充设备隔离、重启持久化、推理显示、会话过滤和版本差异回归测试。",
   "bin": "gateway.js",
   "pkg": {
     "assets": [
@@ -30,7 +30,7 @@
   },
   "scripts": {
     "start": "node gateway.js",
-    "check": "node --check gateway.js && node --check gateway-stats.cjs && node --check packages/plugin/index.mjs && node --check public/app.js && node --check public/admin.js && node --check public/i18n.js && node --check public/theme.js && node --check public/sha256.js && node --check public/md.js && node --check public/desktop/desktop.js && node --check public/desktop/i18n.js && node --test tests/*.test.js",
+    "check": "node --check gateway.js && node --check gateway-stats.cjs && node --check packages/plugin/index.mjs && node --check public/app.js && node --check public/admin.js && node --check public/i18n.js && node --check public/theme.js && node --check public/sha256.js && node --check public/md.js && node --check public/transcribe-core.js && node --check public/desktop/desktop.js && node --check public/desktop/i18n.js && node --test tests/*.test.js",
     "test-stats": "node --test tests/stats.test.js",
     "sync-app": "npx cap sync android",
     "build-app": "node scripts/prepare-version.mjs && npx cap sync android && cd android && ./gradlew assembleDebug",

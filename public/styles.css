@@ -1057,3 +1057,31 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .overview-pulse-card { grid-template-columns:1fr auto; }
   .overview-metric-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
 }
+
+.composer-transcribe-btn { right: 42px; width: auto; min-width: 44px; padding: 0 9px; font-size: 12px; font-weight: 600; line-height: 1; white-space: nowrap; color: var(--dsr-accent-strong); }
+.composer-wrap.fs .composer-transcribe-btn { right: 42px; width: auto; min-width: 44px; padding: 0 9px; }
+.composer-wrap.fs .composer-input-wrap textarea { padding-right: 92px; }
+
+.transcribe-field { flex: 1 1 auto; min-width: 0; }
+.setting-input { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--dsr-line); background: var(--dsr-bg-2); color: var(--dsr-text); font: inherit; font-size: 14px; }
+.setting-input:focus { outline: none; border-color: var(--dsr-accent-line); }
+.setting-input[readonly] { color: var(--dsr-muted); background: var(--dsr-bg); }
+.setting-hint { font-size: 12px; color: var(--dsr-muted); margin-top: 5px; line-height: 1.5; white-space: normal; overflow: visible; text-overflow: clip; word-break: break-word; }
+.transcribe-actions { justify-content: flex-start; }
+.transcribe-status { padding: 4px 2px 2px; font-size: 12px; line-height: 1.5; white-space: normal; word-break: break-word; }
+
+.transcribe-warn-title { font-weight: 600; margin-bottom: 6px; }
+.transcribe-warn-text { font-size: 12.5px; color: var(--dsr-muted); margin: 0 0 10px; line-height: 1.65; white-space: normal; }
+.transcribe-warn-box { position: relative; border: 1px solid var(--dsr-line); border-radius: 10px; background: var(--dsr-bg-2); }
+.transcribe-code { width: 100%; box-sizing: border-box; min-height: 130px; padding: 10px 58px 10px 10px; border: none; background: transparent; color: var(--dsr-text); font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, 'Courier New', monospace; resize: vertical; }
+.transcribe-warn-box .mini-btn { position: absolute; top: 8px; right: 8px; z-index: 1; }
+
+.transcribe-overlay { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; gap: 8px; padding: calc(10px + var(--dsr-safe-top)) 12px calc(12px + var(--dsr-safe-b)); background: var(--dsr-bg); }
+.transcribe-test-head { display: flex; align-items: center; gap: 10px; flex: none; }
+.transcribe-test-head-title { font-weight: 600; }
+.transcribe-test-head-slot { flex: 1; text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.transcribe-test-label { flex: none; font-size: 12px; color: var(--dsr-muted); }
+.transcribe-test-area { flex: 1 1 0; min-height: 0; width: 100%; box-sizing: border-box; padding: 10px; border-radius: 10px; border: 1px solid var(--dsr-line); background: var(--dsr-bg-2); color: var(--dsr-text); font: inherit; font-size: 14px; resize: none; }
+.transcribe-test-area:focus { outline: none; border-color: var(--dsr-accent-line); }
+.transcribe-test-area[readonly] { color: var(--dsr-text); }
+.transcribe-test-convert { flex: none; align-self: center; padding: 9px 26px; font-size: 14px; }

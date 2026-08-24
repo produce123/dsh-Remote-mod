@@ -158,6 +158,7 @@
               <svg id="fs-ico-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5"/></svg>
               <svg id="fs-ico-collapse" class="hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M9 3v6H3M15 3v6h6M9 21v-6H3M21 15h-6v6"/></svg>
             </button>
+            <button id="btn-fs-transcribe" class="composer-fs-btn composer-transcribe-btn hidden" type="button" data-i18n="composer.transcribe"></button>
           </div>
           <button id="btn-image" class="composer-image-btn" type="button" data-i18n-title="composer.addImage" data-i18n-aria="composer.addImage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.2"/><path d="m5 17 4.5-4.5 3 3 2-2L19 17"/></svg></button>
           <button id="btn-send" class="send-btn" data-i18n="composer.send">发送</button>
@@ -241,6 +242,9 @@
             <div><div class="setting-name" data-i18n="settings.groupGeneral">通用</div><div class="setting-desc" data-i18n="settings.groupGeneralDesc">显示工具调用、预设提示词</div></div>
           </div>
           <div class="setting-row" data-settings-group="servers" style="cursor:pointer">
+          <div class="setting-row" data-settings-group="transcribe" style="cursor:pointer">
+            <div><div class="setting-name" data-i18n="settings.transcribeTitle">prompt 转写</div><div class="setting-desc" data-i18n="settings.transcribeDesc">用 OpenAI 兼容 API 把输入内容改写为条理清晰的 prompt</div></div>
+          </div>
             <div><div class="setting-name" data-i18n="settings.groupServers">服务器</div><div class="setting-desc" data-i18n="settings.groupServersDesc">服务器地址、扫码连接</div></div>
           </div>
           <div class="setting-row" data-settings-group="notify" style="cursor:pointer">
@@ -318,6 +322,60 @@
         </div>
       </div>
 
+      <div id="settings-page-transcribe" class="settings-subpage hidden">
+        <div class="settings-group">
+          <div class="setting-row" data-settings-back style="cursor:pointer">
+            <button class="mini-btn" data-i18n="settings.back">‹ 返回</button>
+            <div class="setting-name" data-i18n="settings.transcribeTitle">prompt 转写</div>
+          </div>
+        </div>
+        <div class="settings-group">
+          <div class="setting-row">
+            <div><div class="setting-name" data-i18n="settings.transcribeOn">prompt 转写</div><div class="setting-desc" data-i18n="settings.transcribeOnDesc">开启后，全屏输入框右上角出现「转写」按钮</div></div>
+            <label class="switch"><input type="checkbox" id="opt-transcribe"><span class="slider"></span></label>
+          </div>
+        </div>
+        <div class="settings-group hidden" id="transcribe-config">
+          <div class="setting-row">
+            <div class="transcribe-field">
+              <div class="setting-name" data-i18n="settings.transcribeApiUrl">API 地址</div>
+              <input id="transcribe-api-url" class="setting-input" type="text" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1">
+              <div class="setting-hint" data-i18n="settings.transcribeApiUrlHint">OpenAI 兼容：https://api.openai.com/v1</div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="transcribe-field">
+              <div class="setting-name" data-i18n="settings.transcribeModel">模型</div>
+              <input id="transcribe-model" class="setting-input" type="text" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="gpt-4o-mini">
+              <div class="setting-hint" data-i18n="settings.transcribeModelHint">任意已开通的模型，如 gpt-4o-mini</div>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div class="transcribe-field">
+              <div class="setting-name" data-i18n="settings.transcribeApiKey">API 密钥</div>
+              <input id="transcribe-api-key" class="setting-input" type="text" autocomplete="off" spellcheck="false" readonly>
+              <div class="setting-hint" data-i18n="settings.transcribeApiKeyHint">sk-xxxxxxxx，点击可重新编辑；失焦后自动隐藏</div>
+            </div>
+          </div>
+          <div class="setting-row transcribe-actions">
+            <button id="btn-transcribe-conn" class="mini-btn" data-i18n="settings.transcribeConn">连接测试</button>
+            <button id="btn-transcribe-test" class="mini-btn" data-i18n="settings.transcribeFunc">功能测试</button>
+          </div>
+          <div id="transcribe-status" class="transcribe-status muted hidden"></div>
+        </div>
+        <div class="settings-group">
+          <div class="transcribe-warn">
+            <div class="transcribe-warn-title" data-i18n="transcribe.warnTitle">不建议用这个功能？</div>
+            <p class="transcribe-warn-text" data-i18n="transcribe.warnText">我们不建议你使用此功能以消耗额外的tokens（除非你非常富有），你完全可以使用豆包达到相同的效果，这仅仅让你浪费了复制/粘贴这几秒钟的时间，你只需要将以下文本发给豆包：</p>
+            <div class="transcribe-warn-box">
+              <textarea id="transcribe-system-prompt" class="transcribe-code" readonly spellcheck="false"></textarea>
+              <button id="btn-transcribe-copy" class="mini-btn" data-i18n="transcribe.copy">复制</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="settings-page-servers" class="settings-subpage hidden">
       <div id="settings-page-servers" class="settings-subpage hidden">
         <div class="settings-group">
           <div class="setting-row" data-settings-back style="cursor:pointer">
@@ -448,6 +506,18 @@
   </main>
 
   <!-- 反馈底部菜单（非模态） -->
+  <div id="view-transcribe-test" class="transcribe-overlay hidden" role="dialog" aria-modal="true" data-i18n-aria="transcribe.testTitle">
+    <div class="transcribe-test-head">
+      <button id="btn-transcribe-test-exit" class="mini-btn" data-i18n="transcribe.testExit">退出</button>
+      <span class="transcribe-test-head-title" data-i18n="transcribe.testTitle">功能测试</span>
+      <span class="transcribe-test-head-slot" id="transcribe-test-title"></span>
+    </div>
+    <div class="transcribe-test-label" data-i18n="transcribe.testRaw">原始文本</div>
+    <textarea id="transcribe-test-input" class="transcribe-test-area" data-i18n-placeholder="transcribe.testRawHint" spellcheck="false"></textarea>
+    <button id="btn-transcribe-test-convert" class="mini-btn transcribe-test-convert" data-i18n="transcribe.testConvert">转换</button>
+    <div class="transcribe-test-label" data-i18n="transcribe.testOutput">转写结果</div>
+    <textarea id="transcribe-test-output" class="transcribe-test-area" readonly data-i18n-placeholder="transcribe.testOutput"></textarea>
+  </div>
   <div id="feedback-backdrop" class="sheet-backdrop hidden"></div>
   <div id="feedback-sheet" class="sheet hidden" role="menu" data-i18n-aria="feedback.title">
     <div class="sheet-handle" aria-hidden="true"></div>
@@ -865,6 +935,21 @@
         'perm.readOnly': 'read-only', 'perm.workspaceWrite': 'workspace-write', 'perm.dangerFullAccess': 'danger-full-access',
         'menu.modelTitle': '模型切换', 'menu.refresh': '刷新', 'menu.modelAuto': '点开时自动加载', 'menu.effortTitle': '思考深度',
         'composer.placeholder': '给 DSH 发消息…', 'composer.send': '发送', 'composer.fullscreen': '全屏编辑', 'composer.exitFullscreen': '退出全屏编辑', 'composer.addImage': '添加图片', 'composer.takePhoto': '拍照', 'composer.choosePhoto': '相册', 'composer.imageAdded': '已添加图片', 'composer.imageRemoved': '已移除图片', 'composer.removeImage': '移除图片', 'composer.imageUnsupported': '仅支持 PNG、JPEG、WebP 或 GIF 图片', 'composer.imageTooLarge': '单张图片不能超过 {size}', 'composer.imageLimit': '最多添加 {count} 张图片', 'composer.imageSlashUnsupported': '带图片时不能发送斜杠命令', 'composer.imageReadFailed': '图片读取失败：{msg}',
+        'settings.transcribeTitle': 'prompt 转写', 'settings.transcribeDesc': '用 OpenAI 兼容 API 把输入内容改写为条理清晰的 prompt', 'settings.transcribeOn': 'prompt 转写', 'settings.transcribeOnDesc': '开启后，全屏输入框右上角出现「转写」按钮',
+        'settings.transcribeApiUrl': 'API 地址', 'settings.transcribeApiUrlHint': 'OpenAI 兼容：https://api.openai.com/v1',
+        'settings.transcribeModel': '模型', 'settings.transcribeModelHint': '任意已开通的模型，如 gpt-4o-mini',
+        'settings.transcribeApiKey': 'API 密钥', 'settings.transcribeApiKeyHint': 'sk-xxxxxxxx，点击可重新编辑；失焦后自动隐藏',
+        'settings.transcribeConn': '连接测试', 'settings.transcribeFunc': '功能测试',
+        'transcribe.on': 'prompt 转写已开启', 'transcribe.off': 'prompt 转写已关闭',
+        'transcribe.statusConnecting': '连接测试中…', 'transcribe.statusConnOk': '连接成功，延迟 {ms}ms', 'transcribe.statusConnFail': '连接失败：{msg}',
+        'transcribe.warnTitle': '不建议用这个功能？',
+        'transcribe.warnText': '我们不建议你使用此功能以消耗额外的tokens（除非你非常富有），你完全可以使用豆包达到相同的效果，这仅仅让你浪费了复制/粘贴这几秒钟的时间，你只需要将以下文本发给豆包：',
+        'transcribe.copy': '复制', 'transcribe.copied': 'System Prompt 已复制', 'transcribe.copyFailed': '复制失败，请手动复制',
+        'transcribe.testTitle': '功能测试', 'transcribe.testExit': '退出', 'transcribe.testRaw': '原始文本', 'transcribe.testOutput': '转写结果',
+        'transcribe.testRawHint': '粘贴一段口语化、没条理的文本…', 'transcribe.testConvert': '转换', 'transcribe.testConverting': '转换中…',
+        'transcribe.testEmpty': '请先输入原始文本', 'transcribe.testDone': '转换完成', 'transcribe.testFailed': '转换失败：{msg}',
+        'transcribe.needText': '请输入要转写的文本', 'transcribe.timeout': '响应超时或长时间无输出，请重试', 'transcribe.networkError': '网络错误，请检查网络或 API 地址', 'transcribe.noContent': '接口未返回有效文本', 'transcribe.configIncomplete': '请先完成 API 地址 / 模型 / 密钥配置',
+        'composer.transcribe': '转写', 'composer.transcribeStop': '停止', 'composer.transcribeDone': '转写完成', 'composer.transcribeStopped': '已停止转写，保留已转写内容', 'composer.transcribeFail': '转写失败：{msg}', 'composer.transcribeRestored': '转写中断，已恢复原文',
         'pending.title': '待处理', 'pending.count': '{n} 项', 'pending.approvalTitle': '🔧 {tool} 请求批准', 'pending.noReason': '无说明',
         'pending.allow': '允许', 'pending.reject': '拒绝', 'pending.question': '❓ {question}',
         'pending.questionCount': '共 {n} 个问题', 'pending.answer': '去回答', 'pending.empty': '暂无待处理事项',
@@ -1076,6 +1161,21 @@
         'perm.readOnly': 'read-only', 'perm.workspaceWrite': 'workspace-write', 'perm.dangerFullAccess': 'danger-full-access',
         'menu.modelTitle': 'Model', 'menu.refresh': 'Refresh', 'menu.modelAuto': 'Auto-loads when opened', 'menu.effortTitle': 'Reasoning effort',
         'composer.placeholder': 'Message DSH…', 'composer.send': 'Send', 'composer.fullscreen': 'Fullscreen editor', 'composer.exitFullscreen': 'Exit fullscreen editor', 'composer.addImage': 'Add image', 'composer.takePhoto': 'Camera', 'composer.choosePhoto': 'Gallery', 'composer.imageAdded': 'Image added', 'composer.imageRemoved': 'Image removed', 'composer.removeImage': 'Remove image', 'composer.imageUnsupported': 'Only PNG, JPEG, WebP or GIF images are supported', 'composer.imageTooLarge': 'Each image must be under {size}', 'composer.imageLimit': 'You can add up to {count} images', 'composer.imageSlashUnsupported': 'Slash commands cannot include images', 'composer.imageReadFailed': 'Could not read image: {msg}',
+        'settings.transcribeTitle': 'Prompt transcribe', 'settings.transcribeDesc': 'Rewrite the composer text into a clean prompt via an OpenAI-compatible API', 'settings.transcribeOn': 'Prompt transcribe', 'settings.transcribeOnDesc': 'When on, a "Transcribe" button appears in the fullscreen composer',
+        'settings.transcribeApiUrl': 'API base URL', 'settings.transcribeApiUrlHint': 'OpenAI-compatible: https://api.openai.com/v1',
+        'settings.transcribeModel': 'Model', 'settings.transcribeModelHint': 'Any enabled model, e.g. gpt-4o-mini',
+        'settings.transcribeApiKey': 'API key', 'settings.transcribeApiKeyHint': 'sk-xxxxxxxx · tap to re-edit; auto-hidden after blur',
+        'settings.transcribeConn': 'Test connection', 'settings.transcribeFunc': 'Test function',
+        'transcribe.on': 'Prompt transcribe enabled', 'transcribe.off': 'Prompt transcribe disabled',
+        'transcribe.statusConnecting': 'Testing connection…', 'transcribe.statusConnOk': 'Connected, latency {ms}ms', 'transcribe.statusConnFail': 'Connection failed: {msg}',
+        'transcribe.warnTitle': 'Why not recommended?',
+        'transcribe.warnText': 'We do not recommend using this feature to burn extra tokens (unless you are very rich). Doubao can do exactly the same for free — this only saves you the few seconds of copy/paste. Just send the text below to Doubao:',
+        'transcribe.copy': 'Copy', 'transcribe.copied': 'System prompt copied', 'transcribe.copyFailed': 'Copy failed, please copy manually',
+        'transcribe.testTitle': 'Function test', 'transcribe.testExit': 'Exit', 'transcribe.testRaw': 'Raw text', 'transcribe.testOutput': 'Output',
+        'transcribe.testRawHint': 'Paste some colloquial, unstructured text here…', 'transcribe.testConvert': 'Convert', 'transcribe.testConverting': 'Converting…',
+        'transcribe.testEmpty': 'Enter some raw text first', 'transcribe.testDone': 'Converted', 'transcribe.testFailed': 'Conversion failed: {msg}',
+        'transcribe.needText': 'Enter some text to transcribe', 'transcribe.timeout': 'Response timed out or stalled, try again', 'transcribe.networkError': 'Network error, check your network or the API URL', 'transcribe.noContent': 'The API returned no usable text', 'transcribe.configIncomplete': 'Fill in the API URL / model / key first',
+        'composer.transcribe': 'Transcribe', 'composer.transcribeStop': 'Stop', 'composer.transcribeDone': 'Transcribed', 'composer.transcribeStopped': 'Stopped, partial result kept', 'composer.transcribeFail': 'Transcribe failed: {msg}', 'composer.transcribeRestored': 'Transcription interrupted — original text restored',
         'pending.title': 'Inbox', 'pending.count': '{n} items', 'pending.approvalTitle': '🔧 {tool} requests approval', 'pending.noReason': 'No reason given',
         'pending.allow': 'Allow', 'pending.reject': 'Reject', 'pending.question': '❓ {question}',
         'pending.questionCount': '{n} questions', 'pending.answer': 'Answer', 'pending.empty': 'Nothing pending',
@@ -1199,6 +1299,7 @@
   <script src="i18n.js"></script>
   <script src="theme.js"></script>
   <script src="md.js"></script>
+  <script src="transcribe-core.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

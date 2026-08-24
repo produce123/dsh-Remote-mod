@@ -4319,7 +4319,7 @@ function showView(id) {
   if (id === 'view-settings') showSettingsHome()
 }
 
-const SETTINGS_GROUPS = ['general', 'servers', 'notify', 'theme', 'about']
+const SETTINGS_GROUPS = ['general', 'transcribe', 'servers', 'notify', 'theme', 'about']
 function showSettingsHome() {
   const home = $('settings-home')
   if (!home) return
@@ -4333,6 +4333,272 @@ function showSettingsPage(name) {
   home.classList.add('hidden')
   for (const g of SETTINGS_GROUPS) $('settings-page-' + g)?.classList.toggle('hidden', g !== name)
   window.scrollTo(0, 0)
+}
+
+/* ---------------- prompt 转写 ---------------- */
+const TC = window.TranscribeCore
+const TRANSCRIBE_LS = { on: 'dshPromptTranscribe', url: 'dshTranscribeApiUrl', model: 'dshTranscribeModel', key: 'dshTranscribeApiKey' }
+const TRANSCRIBE_STREAM_IDLE_MS = 30000 // 流式读取: 两次数据块之间的最长静默
+const TRANSCRIBE_STREAM_TOTAL_MS = 120000 // 单次转写总上限(含首字节等待)
+let transcribeKeyEditing = false
+
+function transcribeCfg() {
+  return {
+    on: LS.get(TRANSCRIBE_LS.on, '0') === '1',
+    url: (LS.get(TRANSCRIBE_LS.url, '') || '').trim().replace(/\/+$/, ''),
+    model: (LS.get(TRANSCRIBE_LS.model, '') || '').trim(),
+    key: LS.get(TRANSCRIBE_LS.key, '') || ''
+  }
+}
+function transcribeReady(cfg) {
+  cfg = cfg || transcribeCfg()
+  return cfg.on && !!cfg.url && !!cfg.model && !!cfg.key
+}
+function transcribeErrText(err) {
+  if (err && err.name === 'TimeoutError') return t('transcribe.timeout')
+  if (err && (err.name === 'AbortError' || err.name === 'TypeError')) return t('transcribe.networkError')
+  return err && err.message ? err.message : t('transcribe.networkError')
+}
+function transcribeGatewayBase() {
+  // 一律经网关 /transcribe 代理转发(规避 WebView 直连第三方 API 的 CORS 限制);
+  // 浏览器直接打开网关页面时退化为同源请求; DSH 插件 /remote 前缀由插件代理到网关。
+  const s = (state.server || '').replace(/\/+$/, '')
+  if (s) return s
+  if (location.protocol === 'http:' || location.protocol === 'https:') {
+    return location.pathname === '/remote' || location.pathname.startsWith('/remote/')
+      ? location.origin + '/remote'
+      : location.origin
+  }
+  return ''
+}
+async function transcribePost(cfg, payload, signal) {
+  const base = transcribeGatewayBase()
+  if (!base) throw new Error(t('transcribe.networkError'))
+  const res = await fetch(base + '/transcribe', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + state.token },
+    body: JSON.stringify(payload),
+    signal // 中止信号必须绑到 fetch, 否则无法中断响应体流(超时/停止都失效)
+  })
+  if (!res.ok) {
+    let detail = ''
+    try { const j = await res.json(); detail = String(j.msg || j.error || '') } catch {}
+    if (detail) throw new Error(detail) // 网关校验提示或上游错误文本优先展示
+    throw new Error(TC.statusMessage(res.status))
+  }
+  return res
+}
+async function transcribeChat(cfg, raw, onDelta, signal) {
+  const payload = {
+    base: cfg.url,
+    model: cfg.model,
+    key: cfg.key,
+    messages: [{ role: 'system', content: TC.TRANSCRIBE_SYSTEM_PROMPT }, { role: 'user', content: raw }]
+  }
+  let started = false
+  for (let attempt = 1; ; attempt++) {
+    // ctrl 必须在 fetch 之前创建并绑定, 才能中断已开始的响应体流
+    const ctrl = new AbortController()
+    if (signal) {
+      // 调用方(全屏输入框「停止」按钮)可随时中止本次转写
+      if (signal.aborted) ctrl.abort()
+      else signal.addEventListener('abort', () => ctrl.abort(), { once: true })
+    }
+    try {
+      const res = await transcribePost(cfg, payload, ctrl.signal)
+      const ctype = res.headers.get('content-type') || ''
+      // 极少数服务端忽略 stream:true 返回普通 JSON → 走非流式分支
+      if (ctype.includes('application/json')) {
+        const data = await res.json()
+        const text = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content
+        if (typeof text !== 'string') throw new Error(t('transcribe.noContent'))
+        if (onDelta) onDelta(text)
+        return text
+      }
+      // SSE 流式: 逐行解析增量文本; 空闲超时(每块重置)与总超时都会中止读取
+      const totalTimer = setTimeout(() => ctrl.abort(), TRANSCRIBE_STREAM_TOTAL_MS)
+      let idleTimer = null
+      const resetIdle = () => {
+        clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => ctrl.abort(), TRANSCRIBE_STREAM_IDLE_MS)
+      }
+      resetIdle()
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let full = ''
+      try {
+        full = await TC.consumeSse(reader, decoder, (piece) => {
+          started = true
+          if (onDelta) onDelta(piece)
+        }, { onChunk: resetIdle })
+      } finally {
+        clearTimeout(totalTimer)
+        clearTimeout(idleTimer)
+      }
+      if (!full) throw new Error(t('transcribe.noContent'))
+      return full
+    } catch (err) {
+      // 只在首个字节到达前的网络层错误(连网关失败)重试一次, 流中间断流不重试
+      const retriable = attempt === 1 && !started && err && err.name === 'TypeError'
+      if (!retriable) throw err
+      await new Promise((r) => setTimeout(r, 800))
+    }
+  }
+}
+
+/* --- 设置页 --- */
+function transcribeKeyMasked() { return TC.maskApiKey(LS.get(TRANSCRIBE_LS.key, '')) }
+function enterTranscribeKeyEdit() {
+  const el = $('transcribe-api-key')
+  if (!el || !el.readOnly) return
+  transcribeKeyEditing = true
+  el.value = LS.get(TRANSCRIBE_LS.key, '')
+  el.readOnly = false
+  el.focus()
+  el.setSelectionRange(el.value.length, el.value.length)
+}
+function saveTranscribeKey() {
+  const el = $('transcribe-api-key')
+  if (!el || !transcribeKeyEditing) return
+  transcribeKeyEditing = false
+  LS.set(TRANSCRIBE_LS.key, el.value.trim())
+  el.value = transcribeKeyMasked()
+  el.readOnly = true
+  updateComposerTranscribeButton()
+}
+function setTranscribeStatus(text) {
+  const el = $('transcribe-status')
+  if (!el) return
+  el.textContent = text
+  el.classList.toggle('hidden', !text)
+}
+function updateTranscribeConfigVis() {
+  const on = $('opt-transcribe')?.checked
+  $('transcribe-config')?.classList.toggle('hidden', !on)
+}
+function initTranscribeUi() {
+  const urlEl = $('transcribe-api-url'); if (urlEl) urlEl.value = LS.get(TRANSCRIBE_LS.url, '')
+  const modelEl = $('transcribe-model'); if (modelEl) modelEl.value = LS.get(TRANSCRIBE_LS.model, '')
+  const keyEl = $('transcribe-api-key')
+  if (keyEl) { keyEl.value = transcribeKeyMasked(); keyEl.readOnly = true }
+  const opt = $('opt-transcribe'); if (opt) opt.checked = LS.get(TRANSCRIBE_LS.on, '0') === '1'
+  const promptEl = $('transcribe-system-prompt'); if (promptEl) promptEl.value = TC.TRANSCRIBE_SYSTEM_PROMPT
+  updateTranscribeConfigVis()
+  updateComposerTranscribeButton()
+}
+async function transcribeConnTest() {
+  const cfg = transcribeCfg()
+  if (!transcribeReady(cfg)) return toast(t('transcribe.configIncomplete'), 'err')
+  setTranscribeStatus(t('transcribe.statusConnecting'))
+  const t0 = performance.now()
+  let errText = ''
+  try {
+    const res = await transcribePost(cfg, { test: true, base: cfg.url, model: cfg.model, key: cfg.key })
+    const data = await res.json()
+    const ms = Math.round(performance.now() - t0)
+    if (data.ok) {
+      const ok = t('transcribe.statusConnOk', { ms })
+      setTranscribeStatus(ok)
+      return toast(ok, 'ok')
+    }
+    // 网关返回的 provider 原始错误(如 401 密钥错误/模型不存在)优先展示
+    let providerMsg = ''
+    try { const j = JSON.parse(data.msg || ''); providerMsg = j?.error?.message || j?.message || '' } catch { providerMsg = String(data.msg || '') }
+    errText = data.error === 'network' ? t('transcribe.networkError') : (providerMsg.trim() || data.error || TC.statusMessage(data.status || 0))
+  } catch (err) { errText = transcribeErrText(err) }
+  const fail = t('transcribe.statusConnFail', { msg: errText })
+  setTranscribeStatus(fail)
+  toast(fail, 'err')
+}
+
+/* --- 功能测试全屏 --- */
+function openTranscribeTest() {
+  if (!transcribeReady()) return toast(t('transcribe.configIncomplete'), 'err')
+  const ov = $('view-transcribe-test')
+  if (!ov) return
+  ov.classList.remove('hidden')
+  if ($('transcribe-test-input')) $('transcribe-test-input').value = ''
+  if ($('transcribe-test-output')) $('transcribe-test-output').value = ''
+  setTranscribeTestBusy(false)
+  $('transcribe-test-input')?.focus()
+}
+function closeTranscribeTest() { $('view-transcribe-test')?.classList.add('hidden') }
+function setTranscribeTestBusy(busy) {
+  const btn = $('btn-transcribe-test-convert')
+  if (!btn) return
+  btn.disabled = busy
+  btn.textContent = t(busy ? 'transcribe.testConverting' : 'transcribe.testConvert')
+}
+async function runTranscribeTest() {
+  const raw = $('transcribe-test-input')?.value || ''
+  if (!raw.trim()) return toast(t('transcribe.testEmpty'), 'err')
+  setTranscribeTestBusy(true)
+  const out = $('transcribe-test-output')
+  if (out) out.value = ''
+  try {
+    await transcribeChat(transcribeCfg(), raw, (piece) => { if (out) out.value += piece })
+    toast(t('transcribe.testDone'), 'ok')
+  } catch (err) { toast(t('transcribe.testFailed', { msg: transcribeErrText(err) }), 'err') }
+  finally { setTranscribeTestBusy(false) }
+}
+
+/* --- 全屏输入框转写 --- */
+let fsTranscribeAbort = null // 非空 = 转写进行中, 停止按钮点击时 abort
+function updateComposerTranscribeButton() {
+  const btn = $('btn-fs-transcribe')
+  if (!btn) return
+  const show = !!($('composer-wrap')?.classList.contains('fs')) && transcribeReady()
+  btn.classList.toggle('hidden', !show)
+  if (show && !fsTranscribeAbort) btn.textContent = t('composer.transcribe')
+}
+function setTranscribeBusy(busy) {
+  // 转写中: 转写按钮变「停止」保持可点, 发送按钮禁用防误发半成品
+  const btn = $('btn-fs-transcribe')
+  if (btn) { btn.disabled = false; btn.textContent = t(busy ? 'composer.transcribeStop' : 'composer.transcribe') }
+  const fsSend = $('btn-fs-send'); if (fsSend) fsSend.disabled = busy
+  const send = $('btn-send'); if (send) send.disabled = busy
+}
+async function composerTranscribe() {
+  const input = $('composer-input')
+  if (!input) return
+  const cfg = transcribeCfg()
+  if (!transcribeReady(cfg)) return toast(t('transcribe.configIncomplete'), 'err')
+  const raw = input.value
+  if (!raw.trim()) return toast(t('transcribe.needText'), 'err')
+  const ac = new AbortController()
+  fsTranscribeAbort = ac
+  let stopped = false
+  ac.signal.addEventListener('abort', () => { stopped = true })
+  setTranscribeBusy(true)
+  let acc = ''
+  try {
+    await transcribeChat(cfg, raw, (piece) => {
+      acc += piece
+      input.value = acc
+      autosize(input)
+      // 实时流式: 光标与滚动始终跟到最新增量, 保证输出可见
+      input.selectionStart = input.selectionEnd = acc.length
+      input.scrollTop = input.scrollHeight
+    }, ac.signal)
+    input.value = acc
+    autosize(input)
+    input.selectionStart = input.selectionEnd = acc.length
+    input.scrollTop = input.scrollHeight
+    toast(t(stopped ? 'composer.transcribeStopped' : 'composer.transcribeDone'), 'ok')
+  } catch (err) {
+    if (stopped) {
+      // 用户主动停止: 保留已转写部分供继续编辑
+      if (acc) { input.value = acc; autosize(input); input.scrollTop = input.scrollHeight }
+      toast(t('composer.transcribeStopped'), 'ok')
+    } else {
+      // 流中断时保留部分结果会覆盖原文, 按"不丢原文"约定恢复原文
+      if (acc) { input.value = raw; autosize(input); toast(t('composer.transcribeRestored'), 'ok') }
+      toast(t('composer.transcribeFail', { msg: transcribeErrText(err) }), 'err')
+    }
+  } finally {
+    fsTranscribeAbort = null
+    setTranscribeBusy(false)
+  }
 }
 
 function updateConn() {
@@ -4413,6 +4679,8 @@ function setComposerFullscreen(on) {
     $('composer-image-menu')?.classList.add('hidden')
     $('btn-image')?.classList.remove('active')
   }
+  // 退出全屏即停止进行中的转写(保留已输出部分), 避免失去停止入口后干等超时
+  if (!on && fsTranscribeAbort) fsTranscribeAbort.abort()
   wrap.classList.toggle('fs', !!on)
   document.body.classList.toggle('composer-fullscreen', !!on)
   if (on) {
@@ -4423,6 +4691,7 @@ function setComposerFullscreen(on) {
     autosize($('composer-input'))
   }
   updateComposerFullscreenButton()
+  updateComposerTranscribeButton()
 }
 
 function bindComposerFullscreenGesture() {
@@ -5061,6 +5330,31 @@ function bindUi() {
   $('btn-fs-toggle').addEventListener('click', () => setComposerFullscreen(!$('composer-wrap').classList.contains('fs')))
   bindComposerFullscreenGesture()
   updateComposerFullscreenButton()
+  // prompt 转写
+  initTranscribeUi()
+  $('opt-transcribe')?.addEventListener('change', (e) => {
+    LS.set(TRANSCRIBE_LS.on, e.target.checked ? '1' : '0')
+    updateTranscribeConfigVis()
+    updateComposerTranscribeButton()
+    toast(t(e.target.checked ? 'transcribe.on' : 'transcribe.off'), 'ok')
+  })
+  $('transcribe-api-url')?.addEventListener('change', (e) => { LS.set(TRANSCRIBE_LS.url, e.target.value.trim()); updateComposerTranscribeButton() })
+  $('transcribe-model')?.addEventListener('change', (e) => { LS.set(TRANSCRIBE_LS.model, e.target.value.trim()); updateComposerTranscribeButton() })
+  $('transcribe-api-key')?.addEventListener('click', enterTranscribeKeyEdit)
+  $('transcribe-api-key')?.addEventListener('blur', saveTranscribeKey)
+  $('btn-transcribe-conn')?.addEventListener('click', transcribeConnTest)
+  $('btn-transcribe-test')?.addEventListener('click', openTranscribeTest)
+  $('btn-transcribe-copy')?.addEventListener('click', async () => {
+    const ok = await copyText(TC.TRANSCRIBE_SYSTEM_PROMPT)
+    toast(ok ? t('transcribe.copied') : t('transcribe.copyFailed'), ok ? 'ok' : 'err')
+  })
+  $('btn-transcribe-test-exit')?.addEventListener('click', closeTranscribeTest)
+  $('btn-transcribe-test-convert')?.addEventListener('click', runTranscribeTest)
+  $('btn-fs-transcribe')?.addEventListener('click', () => {
+    // 转写进行中点击 = 停止(保留已输出部分); 空闲时点击 = 开始转写
+    if (fsTranscribeAbort) { fsTranscribeAbort.abort(); return }
+    composerTranscribe()
+  })
   input.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || e.isComposing) return
     if (isMobileDevice() && mobileEnterAction() !== 'send') return
