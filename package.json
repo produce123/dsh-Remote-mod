@@ -1,6 +1,6 @@
 {
   "name": "dsh-remote",
-  "version": "0.7.6-mod",
+  "version": "0.7.7-mod",
   "private": true,
   "dsh": {
     "bundle": {
@@ -15,7 +15,7 @@
     }
   },
   "description": "DSH 移动远程控制台: DSH 插件(内置网关自启停) + 独立网关 + Android App 一体",
-  "updateNotes": "0.7.6-mod：prompt 转写实时流式优化 —— ① 修复中止信号未绑定 fetch 导致「停止/空闲超时/总超时」全部失效的缺陷（此前转写一旦开始只能等 120s 上限，超时保护形同虚设），现在转写可随时中止、超时真正中断流；② 全屏输入框转写中「转写」按钮变为「停止」，点击立即停止并保留已转写内容，退出全屏自动停止；③ 转写进行中禁用发送按钮，防止半成品 prompt 误发；④ 流式输出期间光标与滚动实时跟随到最新增量，长输出不丢尾；⑤ SSE 解析循环提取为 transcribe-core.consumeSse 并补单元测试（跨块切行/[DONE]/错误帧/噪声行/onChunk 空闲计时），网关新增慢速分块 SSE 实时透传时序测试，共 62 项测试全绿。\n0.7.5-mod：修复会话消息中的 Markdown 表格无法渲染的问题——md.js 新增 GFM 表格支持（表头 + 对齐分隔行 + 正文行，单元格支持加粗/斜体/链接/行内代码，窄屏自动横向滚动），手机端与桌面端消息渲染同步生效。\n0.7.4-mod.1：修复底部导航 UI（移除主页波浪与突起美化，改为平铺等宽导航栏）；修复 prompt 转写连接测试（兼容不实现 GET /models 的 OpenAI 兼容服务，自动回退最小 chat 探测并展示真实错误；补充 DSH 插件 /remote 路径下的转写代理与 /remote 前缀适配）。\n0.7.4-mod：① 移除文件传输功能（手机端文件页、上传/下载/预览、网关 /fs/* 全部移除，会话页拍照/图片附件不受影响），如需文件同步推荐 Syncthing（https://github.com/syncthing/syncthing）；② 工作台保留并改造：项目直接读取 DSH 已登记工作区、不再扫描磁盘，桌面端绑定改为从工作区列表选择；③ 整合上游 v0.6.12：远程启动/重启 DSH 改为异步追踪（成功显示 PID/HTTP 状态/用时，失败细分原因并显示步骤），主页新增常驻公告栏（30 秒轮询 + 回到前台/联网补查），网关支持可选中央公告源 DSH_REMOTE_ANNOUNCEMENTS_URL（默认纯本地，不指向任何第三方）；④ 公告系统重写：明确本分支为基于原作者 Blank 的 dsh-Remote 的个人魔改版，请认准原作者与原版项目。",
+  "updateNotes": "0.7.7-mod：整合上游 v0.6.13 的部分体验功能（按个人版定位取舍）——① 实时推理显示：会话中实时展示模型思考过程（assistant/chunk 流，手机端与桌面端同步生效，思考中带脉冲动效）；② 推理档位菜单增强：未声明推理档位的模型自动提供低/高/最大三档并附提示；③ 会话过滤：普通会话列表、工作台树、主页统计不再混入子代理内部会话；④ 推理流逻辑抽为 reasoning-core.js 共享模块（手机/桌面共用）并补 4 项单元测试，共 66 项测试全绿。\n0.7.6-mod：prompt 转写实时流式优化 —— ① 修复中止信号未绑定 fetch 导致「停止/空闲超时/总超时」全部失效的缺陷（此前转写一旦开始只能等 120s 上限，超时保护形同虚设），现在转写可随时中止、超时真正中断流；② 全屏输入框转写中「转写」按钮变为「停止」，点击立即停止并保留已转写内容，退出全屏自动停止；③ 转写进行中禁用发送按钮，防止半成品 prompt 误发；④ 流式输出期间光标与滚动实时跟随到最新增量，长输出不丢尾；⑤ SSE 解析循环提取为 transcribe-core.consumeSse 并补单元测试（跨块切行/[DONE]/错误帧/噪声行/onChunk 空闲计时），网关新增慢速分块 SSE 实时透传时序测试，共 62 项测试全绿。\n0.7.5-mod：修复会话消息中的 Markdown 表格无法渲染的问题——md.js 新增 GFM 表格支持（表头 + 对齐分隔行 + 正文行，单元格支持加粗/斜体/链接/行内代码，窄屏自动横向滚动），手机端与桌面端消息渲染同步生效。\n0.7.4-mod.1：修复底部导航 UI（移除主页波浪与突起美化，改为平铺等宽导航栏）；修复 prompt 转写连接测试（兼容不实现 GET /models 的 OpenAI 兼容服务，自动回退最小 chat 探测并展示真实错误；补充 DSH 插件 /remote 路径下的转写代理与 /remote 前缀适配）。\n0.7.4-mod：① 移除文件传输功能（手机端文件页、上传/下载/预览、网关 /fs/* 全部移除，会话页拍照/图片附件不受影响），如需文件同步推荐 Syncthing（https://github.com/syncthing/syncthing）；② 工作台保留并改造：项目直接读取 DSH 已登记工作区、不再扫描磁盘，桌面端绑定改为从工作区列表选择；③ 整合上游 v0.6.12：远程启动/重启 DSH 改为异步追踪（成功显示 PID/HTTP 状态/用时，失败细分原因并显示步骤），主页新增常驻公告栏（30 秒轮询 + 回到前台/联网补查），网关支持可选中央公告源 DSH_REMOTE_ANNOUNCEMENTS_URL（默认纯本地，不指向任何第三方）；④ 公告系统重写：明确本分支为基于原作者 Blank 的 dsh-Remote 的个人魔改版，请认准原作者与原版项目。",
   "bin": "gateway.js",
   "pkg": {
     "assets": [
@@ -30,7 +30,7 @@
   },
   "scripts": {
     "start": "node gateway.js",
-    "check": "node --check gateway.js && node --check gateway-stats.cjs && node --check packages/plugin/index.mjs && node --check public/app.js && node --check public/admin.js && node --check public/i18n.js && node --check public/theme.js && node --check public/sha256.js && node --check public/md.js && node --check public/history-core.js && node --check public/transcribe-core.js && node --check public/desktop/desktop.js && node --check public/desktop/i18n.js && node --test tests/stats.test.js tests/gateway.test.js tests/md.test.js tests/network-regression.test.js tests/history.test.js tests/transcribe-core.test.js tests/lifecycle.test.js tests/plugin-autostart.test.js tests/plugin-runtime.test.js tests/user-flows.test.js tests/poll-summary.test.js",
+    "check": "node --check gateway.js && node --check gateway-stats.cjs && node --check packages/plugin/index.mjs && node --check public/app.js && node --check public/admin.js && node --check public/i18n.js && node --check public/theme.js && node --check public/sha256.js && node --check public/md.js && node --check public/history-core.js && node --check public/reasoning-core.js && node --check public/transcribe-core.js && node --check public/desktop/desktop.js && node --check public/desktop/i18n.js && node --test tests/stats.test.js tests/gateway.test.js tests/md.test.js tests/network-regression.test.js tests/history.test.js tests/transcribe-core.test.js tests/reasoning-core.test.js tests/lifecycle.test.js tests/plugin-autostart.test.js tests/plugin-runtime.test.js tests/user-flows.test.js tests/poll-summary.test.js",
     "test-stats": "node --test tests/stats.test.js",
     "sync-app": "npx cap sync android",
     "build-app": "node scripts/prepare-version.mjs && npx cap sync android && cd android && ./gradlew assembleDebug",

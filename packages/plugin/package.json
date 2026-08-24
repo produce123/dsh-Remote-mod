@@ -1,7 +1,7 @@
 {
   "name": "dsh-remote-mod-plugin",
-  "version": "0.7.6-mod",
-  "description": "DSH Remote 的 mod 分支 bundle 插件（独立于上游 dsh-remote-plugin，基于原作者 Blank 的 dsh-Remote 魔改的个人版）：已移除文件传输（推荐 Syncthing，https://github.com/syncthing/syncthing），工作台改读 DSH 工作区；整合上游 v0.6.12 —— 远程启动/重启 DSH 异步追踪（步骤化 + 失败原因细分）、主页公告栏常驻（可选 DSH_REMOTE_ANNOUNCEMENTS_URL 中央源，默认纯本地）；另含投票公告（票落本机网关 ~/.dsh-remote/poll-votes.jsonl）、周末全天谷时计费与提醒、prompt 转写（OpenAI 兼容 API 经网关代理）、插件图标随 DSH 主题自适应、反馈渠道为维护者自有（GitHub/B站/邮箱）。功能：DSH 左侧原生边栏入口 + 右侧抽屉内嵌管理控制台；内置网关随 DSH 自动启停(systemd 独立单元)，抽屉直显令牌与设备监控；配合 Android App 远程操控会话/审批/提问/goal（多服务器测速切换、聊天记录离线缓存）。",
+  "version": "0.7.7-mod",
+  "description": "DSH Remote 的 mod 分支 bundle 插件（独立于上游 dsh-remote-plugin，基于原作者 Blank 的 dsh-Remote 魔改的个人版）：已移除文件传输（推荐 Syncthing，https://github.com/syncthing/syncthing），工作台改读 DSH 工作区；整合上游 v0.6.12/v0.6.13 —— 远程启动/重启 DSH 异步追踪、主页公告栏常驻（可选中央公告源）、实时推理显示与推理档位菜单增强、会话过滤（子代理会话不混入列表）；另含投票公告、周末全天谷时计费与提醒、prompt 转写（OpenAI 兼容 API 经网关代理，流式 + 停止/超时保护）、Markdown 表格渲染、插件图标随 DSH 主题自适应、反馈渠道为维护者自有（GitHub/B站/邮箱）。功能：DSH 左侧原生边栏入口 + 右侧抽屉内嵌管理控制台；内置网关随 DSH 自动启停(systemd 独立单元)，抽屉直显令牌与设备监控；配合 Android App 远程操控会话/审批/提问/goal（多服务器测速切换、聊天记录离线缓存）。",
   "type": "module",
   "main": "./index.mjs",
   "exports": {

@@ -1167,6 +1167,10 @@ function applyProjection(sessionId, key, value, seq) {
 }
 function titleOf(s) { return proj(s, 'title') || (s?.sessionId ? short(s.sessionId) : t('session.unknown')) }
 function short(id) { return '…' + String(id).slice(-8) }
+function isTopLevelSession(session) {
+  return !!session && !session.parentSessionId && session.origin !== 'subagent'
+}
+function topLevelSessions() { return state.sessions.filter(isTopLevelSession) }
 const GOAL_TERMINAL_PHASES = new Set(['complete', 'cleared'])
 function isGoalTerminal(goal) {
   return !!goal && GOAL_TERMINAL_PHASES.has(goal.phase)
@@ -1254,7 +1258,7 @@ function renderWorkbench() {
   panel.innerHTML = projects.map(w => {
     const id = String(w.workspaceId || '')
     const open = !!state.wbOpenProjects[id]
-    const sessions = (w.sessionIds || []).map(sid => state.byId.get(sid)).filter(Boolean).filter(s => !archivedSet.has(s.sessionId))
+    const sessions = (w.sessionIds || []).map(sid => state.byId.get(sid)).filter(isTopLevelSession).filter(s => !archivedSet.has(s.sessionId))
     const body = open ? `<div class="wb-sessions">${sessions.length ? sessions.map(s => `
       <div class="session-swipe" data-session-swipe data-id="${esc(s.sessionId)}">
         <button class="wb-session" type="button" data-wb-session="${esc(s.sessionId)}">
@@ -1286,7 +1290,7 @@ function workspaceDisplayName(label) {
   return parts[parts.length - 1] || value
 }
 function sortedSessions() {
-  const items = [...state.sessions]
+  const items = topLevelSessions()
   if (state.sessionSort === 'workspace') {
     return items.sort((a, b) => {
       const aw = sessionCwd(a) || '\uffff'
@@ -1357,7 +1361,7 @@ function renderSessions() {
   const sort = $('session-sort')
   if (sort) sort.value = state.sessionSort
   $('home-empty').classList.toggle('hidden', visible.length > 0)
-  const running = state.sessions.filter(s => s.running).length
+  const running = topLevelSessions().filter(s => s.running).length
   const pending = state.approvals.length + state.questions.length
   $('stat-strip').innerHTML = `
     <div class="stat running"><div class="v">${running}</div><div class="k">${t('sessions.statRunning')}</div></div>
@@ -1443,8 +1447,36 @@ const HISTORY_TIMEOUT = 180000  // 历史冷重放专用超时(旧会话冷读�
 function emptyHistory() {
   return {
     visible: [], seqs: new Set(), minSeq: Infinity,
-    hasMore: false, loading: false, renderStart: 0, renderEnd: 0
+    hasMore: false, loading: false, renderStart: 0, renderEnd: 0,
+    partialReasoning: new Map()
   }
+}
+
+const RC = window.ReasoningCore
+function reasoningStreamKey(data, index) { return RC.reasoningStreamKey(data, index) }
+/** DSH 实时思考: assistant/chunk + reasoning-chunks 增量并入 partialReasoning。 */
+function applyReasoningStreamEvent(event) {
+  return RC.applyReasoningStreamEvent(state.history.partialReasoning, event)
+}
+
+let reasoningRenderTimer = null
+function scheduleReasoningRender() {
+  if (reasoningRenderTimer) return
+  reasoningRenderTimer = setTimeout(() => {
+    reasoningRenderTimer = null
+    if (!state.current) return
+    const box = $('history')
+    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 240
+    renderHistory(false, nearBottom ? 'bottom' : 'fixed')
+  }, 80)
+}
+
+function partialReasoningHtml() {
+  return [...state.history.partialReasoning.values()]
+    .filter(item => item.text)
+    .sort((a, b) => (a.turn ?? 0) - (b.turn ?? 0) || (a.step ?? 0) - (b.step ?? 0) || (a.index ?? 0) - (b.index ?? 0))
+    .map(item => `<div class="msg assistant reasoning-live"><div class="role">${esc(t('role.dsh'))}</div><details class="tool" open><summary>${esc(t('block.thinkingLive'))}</summary><div class="tool-text">${esc(truncate(item.text, 12000))}</div></details></div>`)
+    .join('')
 }
 
 /* HistoryCore.append 已执行裁剪; 这里按裁掉条数同步渲染窗口游标 */
@@ -1542,6 +1574,8 @@ async function loadHistory(reset) {
   }
 
   const incoming = v.events || []
+  if (reset) state.history.partialReasoning.clear()
+  for (const entry of incoming) applyReasoningStreamEvent(entry?.event)
   const r = HistoryCore.append(state.history.seqs, state.history.visible, incoming, HISTORY_MAX_VISIBLE, ev => shouldShowEvent(ev?.type))
   // 向前翻页游标 = 本页最旧的 raw seq(即使它本身被过滤)
   const firstSeq = incoming[0]?.event?.seq
@@ -1563,8 +1597,16 @@ async function loadHistory(reset) {
 
 function insertLiveEvent(event) {
   const h = state.history
+  const reasoningChanged = applyReasoningStreamEvent(event)
+  if (event?.type === 'assistant/chunk' || event?.type === 'reasoning-chunks') {
+    if (reasoningChanged) scheduleReasoningRender()
+    return
+  }
   const r = HistoryCore.append(h.seqs, h.visible, [{ event }], HISTORY_MAX_VISIBLE, ev => shouldShowEvent(ev?.type))
-  if (!r.added) return
+  if (!r.added) {
+    if (reasoningChanged) scheduleReasoningRender()
+    return
+  }
   trimVisible(r.dropped)
   const box = $('history')
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 240
@@ -1595,7 +1637,8 @@ function renderHistory(reset, mode = 'bottom') {
   const h = state.history
   const filtered = filteredEntries()
   const len = filtered.length
-  if (!len) {
+  const reasoningHtml = partialReasoningHtml()
+  if (!len && !reasoningHtml) {
     box.innerHTML = '<div class="empty">' + t('history.empty') + '</div>'
     h.renderStart = 0; h.renderEnd = 0
     updateRail()
@@ -1616,7 +1659,7 @@ function renderHistory(reset, mode = 'bottom') {
     const d = e.event.data || {}
     if (d.callId && d.name) toolNames.set(d.callId, d.name)
   }
-  box.innerHTML = filtered.slice(start, end).map(e => eventHtml(e, { toolNames })).join('')
+  box.innerHTML = filtered.slice(start, end).map(e => eventHtml(e, { toolNames })).join('') + reasoningHtml
   if (reset || mode === 'bottom') box.scrollTop = box.scrollHeight
   else if (mode === 'keep') box.scrollTop = Math.max(0, oldTop + (box.scrollHeight - oldH))
   else if (mode === 'fixed') box.scrollTop = oldTop
@@ -2118,14 +2161,35 @@ function renderEffortMenu() {
   const cur = state.models.current
   const provider = (state.models.groups || []).find(g => g.id === cur?.provider)
   const model = (provider?.models || []).find(m => m.id === cur?.model)
-  const efforts = model?.reasoning?.efforts || []
-  group.classList.toggle('hidden', !efforts.length)
+  const { efforts, defaultEffort, custom } = reasoningEffortOptions(model)
+  group.classList.toggle('hidden', !cur || !efforts.length)
   box.innerHTML = efforts.map(e => {
-    const isCur = cur?.reasoningEffort === e.id || (!cur?.reasoningEffort && e.id === model.reasoning.defaultEffort)
+    const isCur = cur?.reasoningEffort === e.id || (!cur?.reasoningEffort && e.id === defaultEffort)
     return `<button class="menu-chip ${isCur ? 'current' : ''}" data-effort="${esc(e.id)}" title="${esc(e.description || '')}">${esc(e.name || e.id)}</button>`
-  }).join('')
+  }).join('') + (custom ? `<span class="effort-hint">${esc(t('models.effortCustomHint'))}</span>` : '')
   box.querySelectorAll('[data-effort]').forEach(btn =>
     btn.addEventListener('click', () => selectSessionEffort(btn.dataset.effort)))
+}
+
+function reasoningEffortOptions(model) {
+  const raw = Array.isArray(model?.reasoning?.efforts) && model.reasoning.efforts.length
+    ? model.reasoning.efforts
+    : (Array.isArray(model?.reasoningEfforts) && model.reasoningEfforts.length ? model.reasoningEfforts : null)
+  const names = {
+    low: t('models.effortLow'), high: t('models.effortHigh'), max: t('models.effortMax'), off: t('models.effortOff')
+  }
+  if (raw) {
+    return {
+      efforts: raw.map(e => typeof e === 'string' ? { id: e, name: names[e] || e } : e),
+      defaultEffort: model?.reasoning?.defaultEffort,
+      custom: !model?.reasoning?.efforts
+    }
+  }
+  return {
+    efforts: ['low', 'high', 'max'].map(id => ({ id, name: names[id] })),
+    defaultEffort: undefined,
+    custom: true
+  }
 }
 
 async function selectSessionEffort(effortId) {
@@ -2316,8 +2380,9 @@ function renderOverview() {
     btn.addEventListener('click', () => openQuestionModal(state.questions.find(q => q.rpcId === btn.dataset.overviewQuestion)))
   })
 
-  const running = state.sessions.filter(s => s.running).length
-  const sessions = [...state.sessions].sort((a, b) => Number(b.running) - Number(a.running) || (new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))).slice(0, 4)
+  const topSessions = topLevelSessions()
+  const running = topSessions.filter(s => s.running).length
+  const sessions = topSessions.sort((a, b) => Number(b.running) - Number(a.running) || (new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))).slice(0, 4)
   const primary = $('overview-primary-action')
   if (primary) {
     let action = 'new'

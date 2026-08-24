@@ -64,7 +64,7 @@ const state = {
   byId: new Map(),
   current: null,
   hostInfo: null,
-  history: { seqs: new Set(), visible: [], hasMore: false, loading: false, minSeq: Infinity },
+  history: { seqs: new Set(), visible: [], hasMore: false, loading: false, minSeq: Infinity, partialReasoning: new Map() },
   approvals: [],
   questions: [],
   questionModal: null,
@@ -282,14 +282,35 @@ function renderEffortMenu() {
   const cur = state.models.current
   const provider = (state.models.groups || []).find(g => g.id === cur?.provider)
   const model = (provider?.models || []).find(m => m.id === cur?.model)
-  const efforts = model?.reasoning?.efforts || []
-  group.classList.toggle('hidden', !efforts.length)
+  const { efforts, defaultEffort, custom } = reasoningEffortOptions(model)
+  group.classList.toggle('hidden', !cur || !efforts.length)
   box.innerHTML = efforts.map(e => {
-    const isCur = cur?.reasoningEffort === e.id || (!cur?.reasoningEffort && e.id === model.reasoning.defaultEffort)
+    const isCur = cur?.reasoningEffort === e.id || (!cur?.reasoningEffort && e.id === defaultEffort)
     return `<button class="ds-model-chip ${isCur ? 'current' : ''}" data-effort="${esc(e.id)}" title="${esc(e.description || '')}">${esc(e.name || e.id)}</button>`
-  }).join('')
+  }).join('') + (custom ? `<span class="ds-effort-hint">${esc(t('models.effortCustomHint'))}</span>` : '')
   box.querySelectorAll('[data-effort]').forEach(btn =>
     btn.addEventListener('click', () => selectSessionEffort(btn.dataset.effort)))
+}
+
+function reasoningEffortOptions(model) {
+  const raw = Array.isArray(model?.reasoning?.efforts) && model.reasoning.efforts.length
+    ? model.reasoning.efforts
+    : (Array.isArray(model?.reasoningEfforts) && model.reasoningEfforts.length ? model.reasoningEfforts : null)
+  const names = {
+    low: t('models.effortLow'), high: t('models.effortHigh'), max: t('models.effortMax'), off: t('models.effortOff')
+  }
+  if (raw) {
+    return {
+      efforts: raw.map(e => typeof e === 'string' ? { id: e, name: names[e] || e } : e),
+      defaultEffort: model?.reasoning?.defaultEffort,
+      custom: !model?.reasoning?.efforts
+    }
+  }
+  return {
+    efforts: ['low', 'high', 'max'].map(id => ({ id, name: names[id] })),
+    defaultEffort: undefined,
+    custom: true
+  }
 }
 
 async function selectSessionEffort(effortId) {
@@ -1229,15 +1250,47 @@ function goalOf(s) {
 function onSessionEvent(sessionId, event) {
   if (state.current === sessionId && event) {
     const h = state.history
-    const seq = event.seq
-    if (seq != null && !h.seqs.has(seq) && shouldShowEvent(event.type)) {
-      h.seqs.add(seq)
-      h.visible.push({ seq, event })
-      h.visible.sort((a, b) => a.seq - b.seq)
-      renderHistory()
+    const reasoningChanged = applyReasoningStreamEvent(event)
+    if (event.type === 'assistant/chunk' || event.type === 'reasoning-chunks') {
+      if (reasoningChanged) scheduleReasoningRender()
+    } else {
+      const seq = event.seq
+      if (seq != null && !h.seqs.has(seq) && shouldShowEvent(event.type)) {
+        h.seqs.add(seq)
+        h.visible.push({ seq, event })
+        h.visible.sort((a, b) => a.seq - b.seq)
+        renderHistory()
+      } else if (reasoningChanged) {
+        scheduleReasoningRender()
+      }
     }
     if (String(event.type || '').startsWith('goal/') || String(event.type || '').startsWith('todo/')) renderSessionCards()
   }
+}
+
+const RC = window.ReasoningCore
+function reasoningStreamKey(data, index) { return RC.reasoningStreamKey(data, index) }
+/** DSH 实时思考: assistant/chunk + reasoning-chunks 增量并入 partialReasoning。 */
+function applyReasoningStreamEvent(event) {
+  return RC.applyReasoningStreamEvent(state.history.partialReasoning, event)
+}
+
+let reasoningRenderTimer = null
+function scheduleReasoningRender() {
+  if (reasoningRenderTimer) return
+  reasoningRenderTimer = setTimeout(() => {
+    reasoningRenderTimer = null
+    if (!state.current) return
+    renderHistory()
+  }, 80)
+}
+
+function partialReasoningHtml() {
+  return [...state.history.partialReasoning.values()]
+    .filter(item => item.text)
+    .sort((a, b) => (a.turn ?? 0) - (b.turn ?? 0) || (a.step ?? 0) - (b.step ?? 0) || (a.index ?? 0) - (b.index ?? 0))
+    .map(item => `<div class="ds-msg assistant ds-reasoning-live"><div class="role">${esc(t('ds.role.dsh'))}</div><details class="ds-tool" open><summary>${esc(t('ds.blockThinkingLive'))}</summary><pre>${esc(String(item.text).slice(0, 12000))}</pre></details></div>`)
+    .join('')
 }
 
 /* ---------------- 会话 ---------------- */
@@ -1262,8 +1315,12 @@ function workspaceDisplayName(label) {
   const parts = clean.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] || value
 }
+function isTopLevelSession(session) {
+  return !!session && !session.parentSessionId && session.origin !== 'subagent'
+}
+function topLevelSessions() { return state.sessions.filter(isTopLevelSession) }
 function sortedSessions() {
-  const items = [...state.sessions]
+  const items = topLevelSessions()
   if (state.sessionSort === 'workspace') {
     return items.sort((a, b) => {
       const aw = sessionCwd(a) || '\uffff'
@@ -1355,6 +1412,7 @@ async function loadHistory() {
     return
   }
   for (const entry of v.events || []) {
+    applyReasoningStreamEvent(entry?.event)
     const ev = entry?.event
     const seq = ev?.seq
     if (seq == null || state.history.seqs.has(seq)) continue
@@ -1427,7 +1485,9 @@ function eventHtml(entry) {
 function renderHistory() {
   const box = $('history')
   const items = state.history.visible
-  box.innerHTML = items.map(eventHtml).join('') || `<div class="ds-empty">${t('ds.historyEmpty')}</div>`
+  const reasoningHtml = partialReasoningHtml()
+  const html = items.map(eventHtml).join('') + reasoningHtml
+  box.innerHTML = html || `<div class="ds-empty">${t('ds.historyEmpty')}</div>`
   box.scrollTop = box.scrollHeight
 }
 
@@ -1987,8 +2047,9 @@ function renderOverviewDesktop() {
   $('ds-overview-attention-list').querySelectorAll('[data-ds-overview-approve]').forEach(btn => btn.addEventListener('click', () => approveApproval(btn.closest('[data-ds-overview-approval]')?.dataset.dsOverviewApproval || '', btn.dataset.dsOverviewApprove === '1')))
   $('ds-overview-attention-list').querySelectorAll('[data-ds-overview-question]').forEach(btn => btn.addEventListener('click', () => openQuestionModal(state.questions.find(q => q.rpcId === btn.dataset.dsOverviewQuestion))))
 
-  const running = state.sessions.filter(s => s.running).length
-  const sessions = [...state.sessions].sort((a, b) => Number(b.running) - Number(a.running) || (new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))).slice(0, 6)
+  const topSessions = topLevelSessions()
+  const running = topSessions.filter(s => s.running).length
+  const sessions = topSessions.sort((a, b) => Number(b.running) - Number(a.running) || (new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))).slice(0, 6)
   const primary = $('ds-overview-primary-action')
   if (primary) {
     let action = 'new'

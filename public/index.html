@@ -724,7 +724,7 @@
         'tool.default': '工具', 'tool.unknown': '未知工具', 'tool.result': '结果',
         'event.taskStart': '▶ 任务开始', 'event.taskEnd': '■ 任务结束',
         'event.systemReminder': '系统提示',
-        'block.image': '图片', 'block.thinking': '🧠 思考过程', 'block.toolCall': '工具调用', 'block.toolResult': '工具结果', 'block.unknown': '块 · {type}',
+        'block.image': '图片', 'block.thinking': '🧠 思考过程', 'block.toolCall': '工具调用', 'block.toolResult': '工具结果', 'block.unknown': '块 · {type}', 'block.thinkingLive': '思考中…',
         'truncated': '…(截断)',
         'stats.title': '本轮统计', 'stats.roundTitle': '本轮统计', 'stats.turnsSteps': '轮次 / 步骤',
         'stats.llmTime': '模型耗时', 'stats.minutes': ' 分钟', 'stats.outputCache': '输出 / 缓存读',
@@ -740,6 +740,8 @@
         'models.loading': '模型加载中…', 'models.loadFailed': '模型列表加载失败：{msg}', 'models.unavailable': '不可用', 'models.none': '没有可用模型',
         'models.switchFailed': '切换模型失败', 'models.switched': '已切换模型：{model}',
         'models.effortFailed': '切换思考深度失败', 'models.effortSwitched': '思考深度：{effort}',
+        'models.effortLow': '低', 'models.effortHigh': '高', 'models.effortMax': '最大', 'models.effortOff': '关闭',
+        'models.effortCustomHint': '该模型未声明推理档位，以下为通用三档',
         'menu.commandsTitle': '输入指令',
         'menu.compact': '/compact 压缩对话历史', 'menu.export': '/export 导出会话日志 ZIP',
         'menu.feedback': '/feedback 反馈当前会话', 'menu.goal': '/goal 设置/查看任务目标',
@@ -915,7 +917,7 @@
         'tool.default': 'tool', 'tool.unknown': 'Unknown tool', 'tool.result': 'Result',
         'event.taskStart': '▶ Task started', 'event.taskEnd': '■ Task finished',
         'event.systemReminder': 'System reminder',
-        'block.image': 'Image', 'block.thinking': '🧠 Thinking', 'block.toolCall': 'Tool call', 'block.toolResult': 'Tool result', 'block.unknown': 'Block · {type}',
+        'block.image': 'Image', 'block.thinking': '🧠 Thinking', 'block.toolCall': 'Tool call', 'block.toolResult': 'Tool result', 'block.unknown': 'Block · {type}', 'block.thinkingLive': 'Thinking…',
         'truncated': '…(truncated)',
         'stats.title': 'This round', 'stats.roundTitle': 'This round', 'stats.turnsSteps': 'Turns / steps',
         'stats.llmTime': 'LLM time', 'stats.minutes': ' min', 'stats.outputCache': 'Output / cache read',
@@ -931,6 +933,8 @@
         'models.loading': 'Loading models…', 'models.loadFailed': 'Failed to load models: {msg}', 'models.unavailable': 'unavailable', 'models.none': 'No models available',
         'models.switchFailed': 'Model switch failed', 'models.switched': 'Switched model: {model}',
         'models.effortFailed': 'Failed to switch reasoning effort', 'models.effortSwitched': 'Reasoning effort: {effort}',
+        'models.effortLow': 'Low', 'models.effortHigh': 'High', 'models.effortMax': 'Max', 'models.effortOff': 'Off',
+        'models.effortCustomHint': 'This model declares no reasoning tiers; using generic low/high/max',
         'menu.commandsTitle': 'Commands',
         'menu.compact': '/compact Compress conversation history', 'menu.export': '/export Export session log ZIP',
         'menu.feedback': '/feedback Feedback current session', 'menu.goal': '/goal Set/view task goal',
@@ -1046,6 +1050,7 @@
   <script src="theme.js"></script>
   <script src="md.js"></script>
   <script src="history-core.js"></script>
+  <script src="reasoning-core.js"></script>
   <script src="transcribe-core.js"></script>
   <script src="app.js"></script>
 </body>

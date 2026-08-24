@@ -15,6 +15,11 @@
    - **远程启动 / 重启 DSH 异步追踪**：不再统一报 502——提交后按「检查服务 → 提交命令 → 等待进程 → 等待 HTTP 恢复 → 等待实时通道」分阶段显示进度，成功展示 PID / HTTP 状态 / 用时，失败细分原因（systemctl 不存在、systemd 不可用、权限不足、服务 failed、各阶段超时等）。
    - **主页公告栏常驻**：未读公告/投票常驻主页，30 秒轮询 + 回到前台 / 网络恢复立即补查。
    - **可选中央公告源**：网关支持 `DSH_REMOTE_ANNOUNCEMENTS_URL` 指向自己的 HTTPS 公告源；**默认纯本地**，不指向任何第三方服务器。
+3b. **整合上游 v0.6.13 部分体验功能**（v0.7.7-mod，按个人版定位取舍）：
+   - **实时推理显示**：会话中实时展示模型思考过程（assistant/chunk 流，手机端与桌面端同步生效，思考中带脉冲动效）。
+   - **推理档位菜单增强**：未声明推理档位的模型自动提供低 / 高 / 最大三档并附提示。
+   - **会话过滤**：普通会话列表、工作台树、主页统计不再混入子代理内部会话。
+   - 推理流逻辑抽为 `reasoning-core.js` 共享模块（手机 / 桌面共用）并补单元测试。
 4. **整合上游 0.6.11 功能**（v0.7.3-mod，保留）：
    - **投票公告**：公告可附带投票（单选），投票经网关校验后落在本机 `~/.dsh-remote/poll-votes.jsonl`，**不依赖任何第三方收集器**，可用 `scripts/summarize-polls.mjs` 汇总结果；历史公告里可再次参与未投的投票。
    - **周末全天谷时**：统计计费与 App 峰谷提醒同步改为周末不计高峰价（周末只在 9:00 提醒一次），并自动清理旧版 LocalNotifications 遗留的重复提醒。
@@ -34,7 +39,7 @@
 dsh plugin --profile web add dsh-remote-mod-plugin
 
 # 或使用 Releases 附带的 tgz 本地安装
-dsh plugin --profile web add /绝对路径/dsh-remote-mod-plugin-0.7.5-mod.tgz
+dsh plugin --profile web add /绝对路径/dsh-remote-mod-plugin-0.7.7-mod.tgz
 ```
 
 安装后重启 DSH Web 并强制刷新浏览器（Ctrl+F5），左侧边栏出现 DSH Remote 入口；网关默认监听 `0.0.0.0:8787`，随 DSH 自动启停与自愈（端口可改：插件管理页或 `DSH_REMOTE_GATEWAY_PORT` 环境变量）。

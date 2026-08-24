@@ -472,6 +472,9 @@
         'models.loading': '模型加载中…', 'models.loadFailed': '模型列表加载失败：{msg}', 'models.unavailable': '不可用', 'models.none': '没有可用模型',
         'models.switchFailed': '切换模型失败', 'models.switched': '已切换模型：{model}',
         'models.effortFailed': '切换思考深度失败', 'models.effortSwitched': '思考深度：{effort}',
+        'models.effortLow': '低', 'models.effortHigh': '高', 'models.effortMax': '最大', 'models.effortOff': '关闭',
+        'models.effortCustomHint': '该模型未声明推理档位，以下为通用三档',
+        'ds.blockThinkingLive': '思考中…',
         'menu.modelTitle': '模型切换', 'menu.effortTitle': '思考深度',
       },
       en: {
@@ -571,12 +574,16 @@
         'models.loading': 'Loading models…', 'models.loadFailed': 'Failed to load models: {msg}', 'models.unavailable': 'unavailable', 'models.none': 'No models available',
         'models.switchFailed': 'Model switch failed', 'models.switched': 'Switched model: {model}',
         'models.effortFailed': 'Failed to switch reasoning effort', 'models.effortSwitched': 'Reasoning effort: {effort}',
+        'models.effortLow': 'Low', 'models.effortHigh': 'High', 'models.effortMax': 'Max', 'models.effortOff': 'Off',
+        'models.effortCustomHint': 'This model declares no reasoning tiers; using generic low/high/max',
+        'ds.blockThinkingLive': 'Thinking…',
         'menu.modelTitle': 'Model', 'menu.effortTitle': 'Reasoning effort',
       }
     }
   </script>
   <script src="i18n.js"></script>
   <script src="../md.js"></script>
+  <script src="../reasoning-core.js"></script>
   <script src="desktop.js"></script>
 </body>
 </html>
