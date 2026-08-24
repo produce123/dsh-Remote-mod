@@ -3324,13 +3324,14 @@ function transcribeGatewayBase() {
   }
   return ''
 }
-async function transcribePost(cfg, payload) {
+async function transcribePost(cfg, payload, signal) {
   const base = transcribeGatewayBase()
   if (!base) throw new Error(t('transcribe.networkError'))
   const res = await fetch(base + '/transcribe', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: 'Bearer ' + state.token },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
+    signal // 中止信号必须绑到 fetch, 否则无法中断响应体流(超时/停止都失效)
   })
   if (!res.ok) {
     let detail = ''
@@ -3340,7 +3341,7 @@ async function transcribePost(cfg, payload) {
   }
   return res
 }
-async function transcribeChat(cfg, raw, onDelta) {
+async function transcribeChat(cfg, raw, onDelta, signal) {
   const payload = {
     base: cfg.url,
     model: cfg.model,
@@ -3349,8 +3350,15 @@ async function transcribeChat(cfg, raw, onDelta) {
   }
   let started = false
   for (let attempt = 1; ; attempt++) {
+    // ctrl 必须在 fetch 之前创建并绑定, 才能中断已开始的响应体流
+    const ctrl = new AbortController()
+    if (signal) {
+      // 调用方(全屏输入框「停止」按钮)可随时中止本次转写
+      if (signal.aborted) ctrl.abort()
+      else signal.addEventListener('abort', () => ctrl.abort(), { once: true })
+    }
     try {
-      const res = await transcribePost(cfg, payload)
+      const res = await transcribePost(cfg, payload, ctrl.signal)
       const ctype = res.headers.get('content-type') || ''
       // 极少数服务端忽略 stream:true 返回普通 JSON → 走非流式分支
       if (ctype.includes('application/json')) {
@@ -3361,7 +3369,6 @@ async function transcribeChat(cfg, raw, onDelta) {
         return text
       }
       // SSE 流式: 逐行解析增量文本; 空闲超时(每块重置)与总超时都会中止读取
-      const ctrl = new AbortController()
       const totalTimer = setTimeout(() => ctrl.abort(), TRANSCRIBE_STREAM_TOTAL_MS)
       let idleTimer = null
       const resetIdle = () => {
@@ -3371,29 +3378,12 @@ async function transcribeChat(cfg, raw, onDelta) {
       resetIdle()
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
-      let buf = ''
       let full = ''
       try {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buf += decoder.decode(value, { stream: true })
-          let nl
-          while ((nl = buf.indexOf('\n')) !== -1) {
-            const line = buf.slice(0, nl).trim()
-            buf = buf.slice(nl + 1)
-            if (!line.startsWith('data:')) continue
-            const parsed = TC.parseSseData(line)
-            if (parsed.type === 'done') { reader.cancel(); break }
-            if (parsed.type === 'error') throw new Error(parsed.error)
-            if (parsed.type === 'delta') {
-              started = true
-              full += parsed.text
-              if (onDelta) onDelta(parsed.text)
-            }
-          }
-          resetIdle()
-        }
+        full = await TC.consumeSse(reader, decoder, (piece) => {
+          started = true
+          if (onDelta) onDelta(piece)
+        }, { onChunk: resetIdle })
       } finally {
         clearTimeout(totalTimer)
         clearTimeout(idleTimer)
@@ -3506,40 +3496,61 @@ async function runTranscribeTest() {
 }
 
 /* --- 全屏输入框转写 --- */
+let fsTranscribeAbort = null // 非空 = 转写进行中, 停止按钮点击时 abort
 function updateComposerTranscribeButton() {
   const btn = $('btn-fs-transcribe')
   if (!btn) return
   const show = !!($('composer-wrap')?.classList.contains('fs')) && transcribeReady()
   btn.classList.toggle('hidden', !show)
-  if (show) btn.textContent = t('composer.transcribe')
+  if (show && !fsTranscribeAbort) btn.textContent = t('composer.transcribe')
+}
+function setTranscribeBusy(busy) {
+  // 转写中: 转写按钮变「停止」保持可点, 发送按钮禁用防误发半成品
+  const btn = $('btn-fs-transcribe')
+  if (btn) { btn.disabled = false; btn.textContent = t(busy ? 'composer.transcribeStop' : 'composer.transcribe') }
+  const fsSend = $('btn-fs-send'); if (fsSend) fsSend.disabled = busy
+  const send = $('btn-send'); if (send) send.disabled = busy
 }
 async function composerTranscribe() {
   const input = $('composer-input')
-  const btn = $('btn-fs-transcribe')
   if (!input) return
   const cfg = transcribeCfg()
   if (!transcribeReady(cfg)) return toast(t('transcribe.configIncomplete'), 'err')
   const raw = input.value
   if (!raw.trim()) return toast(t('transcribe.needText'), 'err')
-  if (btn) { btn.disabled = true; btn.textContent = t('composer.transcribing') }
+  const ac = new AbortController()
+  fsTranscribeAbort = ac
+  let stopped = false
+  ac.signal.addEventListener('abort', () => { stopped = true })
+  setTranscribeBusy(true)
   let acc = ''
   try {
     await transcribeChat(cfg, raw, (piece) => {
       acc += piece
       input.value = acc
-      input.selectionStart = input.selectionEnd = acc.length
       autosize(input)
-    })
+      // 实时流式: 光标与滚动始终跟到最新增量, 保证输出可见
+      input.selectionStart = input.selectionEnd = acc.length
+      input.scrollTop = input.scrollHeight
+    }, ac.signal)
     input.value = acc
-    input.selectionStart = input.selectionEnd = acc.length
     autosize(input)
-    toast(t('composer.transcribeDone'), 'ok')
+    input.selectionStart = input.selectionEnd = acc.length
+    input.scrollTop = input.scrollHeight
+    toast(t(stopped ? 'composer.transcribeStopped' : 'composer.transcribeDone'), 'ok')
   } catch (err) {
-    // 流中断时保留部分结果会覆盖原文, 按"不丢原文"约定恢复原文
-    if (acc) { input.value = raw; autosize(input); toast(t('composer.transcribeRestored'), 'ok') }
-    toast(t('composer.transcribeFail', { msg: transcribeErrText(err) }), 'err')
+    if (stopped) {
+      // 用户主动停止: 保留已转写部分供继续编辑
+      if (acc) { input.value = acc; autosize(input); input.scrollTop = input.scrollHeight }
+      toast(t('composer.transcribeStopped'), 'ok')
+    } else {
+      // 流中断时保留部分结果会覆盖原文, 按"不丢原文"约定恢复原文
+      if (acc) { input.value = raw; autosize(input); toast(t('composer.transcribeRestored'), 'ok') }
+      toast(t('composer.transcribeFail', { msg: transcribeErrText(err) }), 'err')
+    }
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = t('composer.transcribe') }
+    fsTranscribeAbort = null
+    setTranscribeBusy(false)
   }
 }
 
@@ -3621,6 +3632,8 @@ function setComposerFullscreen(on) {
     $('composer-image-menu')?.classList.add('hidden')
     $('btn-image')?.classList.remove('active')
   }
+  // 退出全屏即停止进行中的转写(保留已输出部分), 避免失去停止入口后干等超时
+  if (!on && fsTranscribeAbort) fsTranscribeAbort.abort()
   wrap.classList.toggle('fs', !!on)
   document.body.classList.toggle('composer-fullscreen', !!on)
   if (on) {
@@ -4397,7 +4410,11 @@ function bindUi() {
   })
   $('btn-transcribe-test-exit')?.addEventListener('click', closeTranscribeTest)
   $('btn-transcribe-test-convert')?.addEventListener('click', runTranscribeTest)
-  $('btn-fs-transcribe')?.addEventListener('click', composerTranscribe)
+  $('btn-fs-transcribe')?.addEventListener('click', () => {
+    // 转写进行中点击 = 停止(保留已输出部分); 空闲时点击 = 开始转写
+    if (fsTranscribeAbort) { fsTranscribeAbort.abort(); return }
+    composerTranscribe()
+  })
 
   bindRail()
 

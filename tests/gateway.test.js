@@ -1185,3 +1185,83 @@ test('转写代理：鉴权、配置校验、test 模式与 SSE 流式透传', a
     fs.rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('转写代理: 慢速分块 SSE 实时透传(首块先到, 不等全部完成)', async () => {
+  // provider 每 180ms 发一块, 共 5 块(总时长约 900ms);
+  // 若网关缓冲整流, 客户端要等 ~900ms 才拿到第一块; 流式则 ~180ms 即到。
+  const provider = http.createServer((req, res) => {
+    if (req.method === 'POST' && req.url === '/chat/completions') {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+      const parts = ['块一', '块二', '块三', '块四', '块五']
+      let i = 0
+      const timer = setInterval(() => {
+        if (i < parts.length) {
+          res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: parts[i] } }] }) + '\n\n')
+          i++
+        } else { clearInterval(timer); res.end('data: [DONE]\n\n') }
+      }, 180)
+      return
+    }
+    res.writeHead(404); res.end()
+  })
+  const providerPort = await new Promise((resolve) => provider.listen(0, '127.0.0.1', () => resolve(provider.address().port)))
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-remote-transcribe-stream-'))
+  const port = await getFreePort()
+  const tbase = `http://127.0.0.1:${port}`
+  const child = spawn(process.execPath, [GATEWAY], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      HOME: root, USERPROFILE: root,
+      PORT: String(port), HOST: '127.0.0.1',
+      DSH_UPSTREAM: 'http://127.0.0.1:1',
+      TOKEN, TOKEN_FILE: path.join(root, 'token'),
+      DSH_REMOTE_FS_ROOT: root,
+      UPDATE_CHECK_URL: 'http://127.0.0.1:1/update',
+      UPDATE_INTERVAL_MS: '3600000',
+      HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '', NO_PROXY: '*'
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  child.stdout.on('data', () => {})
+  child.stderr.on('data', () => {})
+  try {
+    await waitForHealth(tbase)
+    const t0 = Date.now()
+    const res = await fetch(tbase + '/transcribe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + TOKEN },
+      body: JSON.stringify({
+        base: `http://127.0.0.1:${providerPort}`, model: 'gpt-x', key: 'sk-test',
+        messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: '原文' }]
+      })
+    })
+    assert.equal(res.status, 200)
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    const first = await reader.read() // 阻塞到第一块网络数据到达
+    const firstAt = Date.now() - t0
+    let body = decoder.decode(first.value, { stream: true })
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      body += decoder.decode(value, { stream: true })
+    }
+    const total = Date.now() - t0
+    // 首块必须在全部完成前显著到达: 总时长约 900ms, 首块应 < 600ms(留余量)
+    assert.ok(firstAt < Math.min(600, total - 150), `首块应流式先到(首块=${firstAt}ms, 总=${total}ms)`)
+    assert.ok(total >= 700, `慢速 provider 总时长应约 900ms(实际=${total}ms), 证明未被缓冲吞并`)
+    assert.match(body, /块一/)
+    assert.match(body, /块五/)
+    assert.match(body, /\[DONE\]/)
+  } finally {
+    if (child.exitCode === null) child.kill('SIGTERM')
+    await Promise.race([
+      once(child, 'exit').then(() => {}),
+      new Promise((r) => setTimeout(r, 2000))
+    ])
+    provider.closeAllConnections?.()
+    await new Promise((resolve) => provider.close(resolve))
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})

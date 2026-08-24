@@ -37,6 +37,37 @@
     return '请求失败（HTTP ' + status + '）'
   }
 
+  /* 消费 SSE 响应流并逐段回调增量文本。
+   * reader: ReadableStreamDefaultReader; decoder: TextDecoder; onDelta(text) 每段增量回调。
+   * 按 \n 切行、跳过非 data: 行; 遇 [DONE] 提前结束; 遇 error 帧抛 Error。
+   * 返回累计全文(可能为空字符串)。流被外部 AbortSignal 中断时抛 AbortError。
+   * app.js 的 transcribeChat 流式循环与单元测试共用。 */
+  async function consumeSse(reader, decoder, onDelta, opts) {
+    opts = opts || {}
+    let buf = ''
+    let full = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      if (opts.onChunk) opts.onChunk() // 每块网络数据到达后回调(用于空闲超时计时)
+      let nl
+      while ((nl = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, nl).trim()
+        buf = buf.slice(nl + 1)
+        if (!line.startsWith('data:')) continue
+        const parsed = parseSseData(line)
+        if (parsed.type === 'done') { reader.cancel(); return full }
+        if (parsed.type === 'error') throw new Error(parsed.error)
+        if (parsed.type === 'delta') {
+          full += parsed.text
+          if (onDelta) onDelta(parsed.text)
+        }
+      }
+    }
+    return full
+  }
+
   /* 解析一条 SSE "data:" 行的增量输出。
    * 返回 { type: 'delta', text } / { type: 'done' } / { type: 'error', error } / { type: 'skip' }。
    * 兼容 OpenAI 兼容接口流式响应(choices[].delta.content)与 [DONE] 结束符;
@@ -57,5 +88,5 @@
     return { type: 'skip' }
   }
 
-  return { TRANSCRIBE_SYSTEM_PROMPT, maskApiKey, statusMessage, parseSseData }
+  return { TRANSCRIBE_SYSTEM_PROMPT, maskApiKey, statusMessage, parseSseData, consumeSse }
 })

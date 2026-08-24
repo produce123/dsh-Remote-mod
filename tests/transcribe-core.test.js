@@ -54,3 +54,63 @@ test('parseSseData: 增量 delta / [DONE] / 错误 / 噪声行', () => {
   assert.deepEqual(TC.parseSseData('data: not-json'), { type: 'skip' })
   assert.deepEqual(TC.parseSseData(''), { type: 'skip' })
 })
+
+/* 从字符串块序列构造 ReadableStream 便于模拟网络分块 */
+function sseStream(chunks) {
+  return new ReadableStream({
+    start(controller) {
+      for (const c of chunks) controller.enqueue(new TextEncoder().encode(c))
+      controller.close()
+    }
+  })
+}
+async function consume(chunks) {
+  const out = []
+  const full = await TC.consumeSse(sseStream(chunks).getReader(), new TextDecoder(), (p) => out.push(p))
+  return { full, out }
+}
+
+test('consumeSse: 跨块切行 / 顺序 / [DONE] 提前结束', async () => {
+  // 一条 data 行被网络分块拆成两半(最易出 bug 的边界)
+  const r = await consume([
+    'data: {"choices":[{"delta":{"content":"你好"}}]}\ndata: {"ch',
+    'oices":[{"delta":{"content":"世界"}}]}\n\n',
+    'data: [DONE]\n\n',
+    'data: {"choices":[{"delta":{"content":"不该出现"}}]}\n\n'
+  ])
+  assert.equal(r.full, '你好世界')
+  assert.deepEqual(r.out, ['你好', '世界'])
+  // [DONE] 前无任何 delta → 空结果(调用方据此报 noContent)
+  const empty = await consume(['data: [DONE]\n\n'])
+  assert.equal(empty.full, '')
+  assert.deepEqual(empty.out, [])
+})
+
+test('consumeSse: error 帧抛错 / 噪声行与空行跳过', async () => {
+  await assert.rejects(
+    () => consume(['data: {"error":{"message":"boom"}}\n\n']),
+    /boom/
+  )
+  const r = await consume([
+    ': keep-alive comment\n\n',
+    'data: not-json\n',
+    'data: {"choices":[{"finish_reason":"stop"}]}\n\n',
+    '\n',
+    'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+    'data: [DONE]\n\n'
+  ])
+  assert.equal(r.full, 'ok')
+  assert.deepEqual(r.out, ['ok'])
+})
+
+test('consumeSse: onChunk 每块回调(空闲超时依据)', async () => {
+  let chunks = 0
+  const full = await TC.consumeSse(
+    sseStream(['a', 'b', 'c']).getReader(),
+    new TextDecoder(),
+    null,
+    { onChunk: () => { chunks++ } }
+  )
+  assert.equal(full, '')
+  assert.equal(chunks, 3)
+})
