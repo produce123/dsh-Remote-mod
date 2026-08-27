@@ -60,6 +60,9 @@ const state = {
   sessionSort: LS.get('sessionSort', 'time') === 'workspace' ? 'workspace' : 'time',
   byId: new Map(),
   current: null,           // 当前打开的 sessionId
+  sessionRecovery: { status: 'idle', error: '' },
+  pendingProjections: new Map(),
+  lastStreamResyncAt: 0,
   hostInfo: null,
   localVersion: '',
   updateInfo: null,
@@ -67,7 +70,11 @@ const state = {
   approvals: [],           // 待处理审批
   questions: [],           // 待处理提问
   queues: {},              // sessionId -> queue items
+  queueSteering: {},       // sessionId:itemId -> pending steer request
+  sessionTurnTimes: {},    // sessionId -> 本轮开始/结束时间，避免中间事件推动排序
   jobs: {},                // sessionId -> jobs
+  sessionActivity: new Set(), // 已发送消息或已执行命令的会话
+  pendingPrompts: new Set(),  // 正在提交消息的会话
   history: emptyHistory(),
   errCount: 0,
   streamInfo: {
@@ -84,7 +91,8 @@ const state = {
   wbProjects: [],
   wbArchived: [],
   wbOpen: false,
-  wbOpenProjects: {}
+  wbOpenProjects: {},
+  subagentExpandedSession: ''
 }
 
 const $ = (id) => document.getElementById(id)
@@ -886,6 +894,7 @@ function openStream(kind, handler, refreshOnOpen, isRestore, ticket = null) {
       renderPending()
     }
     if (refreshOnOpen) refreshAll()
+    if (allStreamsOpen()) resyncAfterStreamOpen()
   }
   ws.onmessage = (msg) => {
     if (!streamIsCurrent(kind, ws, generation)) return
@@ -972,9 +981,9 @@ async function pollKind(kind) {
   const since = state.pollSeq[kind] || 0
   let res
   try {
-    const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(5000) : undefined
+    const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(30000) : undefined
     const headers = { authorization: 'Bearer ' + state.token, 'x-dsh-remote-client': CAP?.isNativePlatform?.() ? 'app' : 'web' }
-    res = signal ? await fetch(apiUrl(`/api/events.poll?kind=${kind}&since=${since}`), { signal, headers }) : await fetch(apiUrl(`/api/events.poll?kind=${kind}&since=${since}`), { headers })
+    res = signal ? await fetch(apiUrl(`/api/events.poll?kind=${kind}&since=${since}&wait=25000`), { signal, headers }) : await fetch(apiUrl(`/api/events.poll?kind=${kind}&since=${since}&wait=25000`), { headers })
   } catch { return }
   if (res.status === 401) { authFailure(); return }
   if (!res.ok) return
@@ -992,6 +1001,7 @@ async function pollKind(kind) {
       renderPending()
     }
     scheduleRefresh()
+    if (state.current) void resyncCurrentSession()
   }
   for (const item of data.events) {
     if (item.seq > (state.pollSeq[kind] || 0)) {
@@ -1105,7 +1115,10 @@ function onHostFrame(full) {
 function onSessionEvent(sessionId, event) {
   if (!event) return
   const s = state.byId.get(sessionId)
-  if (s) s.updatedAt = Date.now()
+  if (event.type === 'turn/start' || event.type === 'turn/end') {
+    noteSessionTurnTime(sessionId, event)
+    renderSessions()
+  }
   if (event.type === 'agent/status') {
     if (s) { s.running = !!event.data?.running; s.blank = false; if (s.running) s.error = false }
     if (state.current === sessionId) { updateCancelBtn(); renderSessionSub(); updateSessionStatus() }
@@ -1147,6 +1160,7 @@ async function refreshSessions() {
   }
   state.sessions = v.items || []
   state.byId = new Map(state.sessions.map(s => [s.sessionId, s]))
+  applyPendingProjections()
   cacheWrite(CACHE.sessions, state.sessions.slice(0, 80))
   renderSessions()
   refreshWorkbench()
@@ -1155,15 +1169,81 @@ async function refreshSessions() {
 function proj(s, key, d) { return s?.projections?.values?.[key] ?? d }
 function applyProjection(sessionId, key, value, seq) {
   const s = state.byId.get(sessionId)
-  if (s) {
-    s.projections = s.projections || { asOfSeq: 0, values: {} }
-    s.projections.values = s.projections.values || {}
-    s.projections.values[key] = value
-    s.projections.asOfSeq = Math.max(s.projections.asOfSeq || 0, seq || 0)
+  if (!s) {
+    const pending = state.pendingProjections.get(sessionId) || { asOfSeq: 0, values: {} }
+    pending.values[key] = value
+    pending.asOfSeq = Math.max(pending.asOfSeq || 0, seq || 0)
+    state.pendingProjections.set(sessionId, pending)
+    return
   }
+  const currentSeq = Number(s.projections?.asOfSeq) || 0
+  if (seq && seq < currentSeq) return
+  s.projections = s.projections || { asOfSeq: 0, values: {} }
+  s.projections.values = s.projections.values || {}
+  s.projections.values[key] = value
+  s.projections.asOfSeq = Math.max(currentSeq, seq || 0)
   if (state.current === sessionId) { renderSessionTitle(); renderSessionCards() }
   if (['title', 'goal', 'todos', 'plan', 'sessionListMetadata'].includes(key)) scheduleRefresh()
   else renderSessions()
+}
+function hydrateSessionProjections(sessionId, projections) {
+  const s = state.byId.get(sessionId)
+  if (!s || !projections || typeof projections !== 'object') return
+  const incomingSeq = Number(projections.asOfSeq) || 0
+  const current = s.projections || { asOfSeq: 0, values: {} }
+  const currentSeq = Number(current.asOfSeq) || 0
+  if (incomingSeq < currentSeq) return
+  s.projections = {
+    asOfSeq: Math.max(currentSeq, incomingSeq),
+    values: { ...(current.values || {}), ...(projections.values || {}) }
+  }
+}
+function applyPendingProjections() {
+  for (const [sessionId, projections] of state.pendingProjections) {
+    if (!state.byId.has(sessionId)) continue
+    hydrateSessionProjections(sessionId, projections)
+    state.pendingProjections.delete(sessionId)
+  }
+}
+function removeLocalSessionRecord(sessionId) {
+  if (!sessionId) return
+  state.sessions = state.sessions.filter(session => session?.sessionId !== sessionId)
+  state.byId.delete(sessionId)
+  state.pendingProjections.delete(sessionId)
+  state.sessionActivity.delete(sessionId)
+  state.pendingPrompts.delete(sessionId)
+  delete state.queues[sessionId]
+  delete state.jobs[sessionId]
+  delete state.sessionTurnTimes[sessionId]
+  if (state.subagentExpandedSession === sessionId) state.subagentExpandedSession = ''
+  const historyCache = readHistoryCache()
+  if (Object.prototype.hasOwnProperty.call(historyCache, sessionId)) {
+    delete historyCache[sessionId]
+    writeHistoryCache(historyCache)
+  }
+  cacheWrite(CACHE.sessions, state.sessions.slice(0, 80))
+}
+function setSessionRecovery(status, error = '') {
+  state.sessionRecovery = { status, error: String(error || '') }
+  if (state.current) { renderSessionSub(); updateSessionStatus() }
+}
+function recoveryLabel() {
+  const status = state.sessionRecovery.status
+  if (status === 'loading' || status === 'resuming') return t('session.recovering')
+  if (status === 'cached') return t('session.recoveryCached')
+  if (status === 'error') return t('session.recoveryFailed')
+  return ''
+}
+function resyncCurrentSession() {
+  if (!state.current) return Promise.resolve()
+  return loadHistory(true).then(() => {
+    if (state.current) { renderSessionCards(); renderSessionSub(); updateCancelBtn(); updateSessionStatus() }
+  })
+}
+function resyncAfterStreamOpen() {
+  if (!state.current || Date.now() - state.lastStreamResyncAt < 1200) return
+  state.lastStreamResyncAt = Date.now()
+  void refreshAll().then(() => resyncCurrentSession())
 }
 function titleOf(s) { return proj(s, 'title') || (s?.sessionId ? short(s.sessionId) : t('session.unknown')) }
 function short(id) { return '…' + String(id).slice(-8) }
@@ -1289,6 +1369,15 @@ function workspaceDisplayName(label) {
   const parts = clean.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] || value
 }
+function sessionSortTime(s) {
+  return Math.max(Number(state.sessionTurnTimes[s?.sessionId]) || 0, Number(s?.updatedAt) || 0, Number(s?.createdAt) || 0)
+}
+function noteSessionTurnTime(sessionId, eventOrTime) {
+  const raw = typeof eventOrTime === 'object' ? eventOrTime?.time : eventOrTime
+  const time = Number(raw) > 0 ? Number(raw) : Date.now()
+  if (!sessionId || !Number.isFinite(time)) return
+  state.sessionTurnTimes[sessionId] = Math.max(Number(state.sessionTurnTimes[sessionId]) || 0, time)
+}
 function sortedSessions() {
   const items = topLevelSessions()
   if (state.sessionSort === 'workspace') {
@@ -1296,10 +1385,10 @@ function sortedSessions() {
       const aw = sessionCwd(a) || '\uffff'
       const bw = sessionCwd(b) || '\uffff'
       const byWorkspace = aw.localeCompare(bw, undefined, { numeric: true, sensitivity: 'base' })
-      return byWorkspace || ((b.updatedAt || 0) - (a.updatedAt || 0))
+      return byWorkspace || (sessionSortTime(b) - sessionSortTime(a))
     })
   }
-  return items.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+  return items.sort((a, b) => sessionSortTime(b) - sessionSortTime(a))
 }
 function renderSessions() {
   const list = $('session-list')
@@ -1341,7 +1430,7 @@ function renderSessions() {
         <div class="sc-title">${esc(title)}</div>
         <div class="sc-meta">
           <span class="sc-dot ${dots.join(' ')}"></span>
-          <span>${fmtTime(s.updatedAt)}</span>
+          <span>${fmtTime(sessionSortTime(s))}</span>
           ${s.running ? '<span>' + t('sessions.running') + '</span>' : ''}
           ${badge}${queueBadge}
         </div>
@@ -1373,26 +1462,65 @@ function renderSessions() {
 /* ---------------- 会话详情 ---------------- */
 async function openSession(id) {
   state.current = id
+  setSessionRecovery('loading')
   state.history = emptyHistory()
   document.body.classList.add('in-session')
   showView('view-session')
+  $('btn-rename-session').classList.remove('hidden')
+  $('btn-archive-session').classList.toggle('hidden', (state.wbArchived || []).includes(id))
   $('session-cards').innerHTML = ''
   renderSessionTitle(); renderSessionSub(); updateCancelBtn(); updateSessionStatus()
   $('history').innerHTML = '<div class="empty">' + t('history.loading') + '</div>'
+  renderQueue()
   restoreCachedHistory()
   await loadHistory(true)
   renderSessionCards()
   refreshSessions()
 }
 
-function closeSession() {
-  setComposerFullscreen(false)
-  clearComposerImages()
-  state.current = null
-  state.history = emptyHistory()
-  document.body.classList.remove('in-session')
-  hideComposerMenu()
-  showView('view-home')
+function sessionHasPendingActivity(sessionId, session) {
+  return !!session?.running
+    || state.sessionActivity.has(sessionId)
+    || state.pendingPrompts.has(sessionId)
+    || (state.queues[sessionId] || []).some(item => item?.placement !== 'context')
+}
+
+async function shouldDiscardEmptySession(sessionId) {
+  const session = state.byId.get(sessionId)
+  if (!session || sessionHasPendingActivity(sessionId, session)) return false
+  const deadline = Date.now() + 600
+  while (state.current === sessionId && state.history.loading && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+  if (state.current !== sessionId || sessionHasPendingActivity(sessionId, session)) return false
+  return isEmptySessionHistory(state.history)
+}
+
+async function closeSession() {
+  if (closeSession.pending) return closeSession.pending
+  const sessionId = state.current
+  if (!sessionId) return
+  const task = (async () => {
+    const discard = await shouldDiscardEmptySession(sessionId)
+    if (state.current !== sessionId) return
+    state.current = null
+    if (discard) removeLocalSessionRecord(sessionId)
+    setComposerFullscreen(false)
+    clearComposerImages()
+    setSessionRecovery('idle')
+    $('btn-rename-session').classList.add('hidden')
+    $('btn-archive-session').classList.add('hidden')
+    state.history = emptyHistory()
+    document.body.classList.remove('in-session')
+    hideComposerMenu()
+    renderSessions()
+    renderWorkbench()
+    showView('view-home')
+  })()
+  closeSession.pending = task
+  try { await task } finally {
+    if (closeSession.pending === task) closeSession.pending = null
+  }
 }
 
 /* Android 手势返回/实体返回: 注册后系统不再直接杀 App, 由这里接管导航 */
@@ -1401,9 +1529,10 @@ function bindNativeBack() {
   try {
     CAP.Plugins?.App?.addListener?.('backButton', () => {
       if ($('composer-wrap')?.classList.contains('fs')) { setComposerFullscreen(false); return }
+      if (customSelectCurrent) { closeCustomSelect(); return }
       const openModal = [...document.querySelectorAll('.modal')].find(m => !m.classList.contains('hidden'))
-      if (openModal) { if (openModal.id === 'modal-notes') closeNotesModal(); else if (openModal.id === 'modal-archive') closeArchiveConfirm(); else openModal.classList.add('hidden'); return }   // 先关弹窗
-      if (document.body.classList.contains('in-session')) { closeSession(); return } // 会话页 → 回主页
+      if (openModal) { if (openModal.id === 'modal-notes') closeNotesModal(); else if (openModal.id === 'modal-archive') closeArchiveConfirm(); else if (openModal.id === 'modal-rename') closeRenameSession(); else if (openModal.id === 'modal-scan-live') closeLiveScan(''); else openModal.classList.add('hidden'); return }   // 先关弹窗
+      if (document.body.classList.contains('in-session')) { void closeSession(); return } // 会话页 → 回主页
       try { CAP.Plugins?.App?.exitApp?.() } catch {}                  // 主页再返回 → 退出(与系统一致)
     })
   } catch {}
@@ -1421,6 +1550,8 @@ function renderSessionSub() {
   if (s.cwd) parts.push(s.cwd)
   if (s.running) parts.push(t('session.running'))
   else if (s.error) parts.push(t('session.interrupted'))
+  const recovery = recoveryLabel()
+  if (recovery) parts.push(recovery)
   $('session-sub').textContent = parts.join(' · ')
 }
 
@@ -1429,6 +1560,8 @@ function updateSessionStatus() {
   const s = state.byId.get(state.current)
   const head = $('session-head')
   if (!head) return
+  const composerStatus = $('composer-status')
+  if (composerStatus) composerStatus.classList.toggle('hidden', !s?.running)
   head.classList.remove('running', 'interrupted')
   const queued = (state.queues[state.current] || []).some(i => i.placement !== 'context')
   if (s?.running || queued) head.classList.add('running')
@@ -1447,9 +1580,15 @@ const HISTORY_TIMEOUT = 180000  // 历史冷重放专用超时(旧会话冷读�
 function emptyHistory() {
   return {
     visible: [], seqs: new Set(), minSeq: Infinity,
-    hasMore: false, loading: false, renderStart: 0, renderEnd: 0,
+    hasMore: false, loading: false, loaded: false, renderStart: 0, renderEnd: 0,
     partialReasoning: new Map()
   }
+}
+function sessionHistoryHasContent(history) {
+  return !!history && ((history.visible?.length || 0) > 0 || (history.partialReasoning?.size || 0) > 0)
+}
+function isEmptySessionHistory(history) {
+  return history?.loaded === true && !sessionHistoryHasContent(history)
 }
 
 const RC = window.ReasoningCore
@@ -1535,9 +1674,11 @@ function restoreCachedHistory() {
   return true
 }
 
-async function loadHistory(reset) {
+async function loadHistory(reset, budget) {
+  budget = budget || { retried: false }
   const id = state.current
   if (!id || state.history.loading) return
+  if (reset) setSessionRecovery('loading')
   state.history.loading = true
   const moreBtn = $('history-more')
   if (moreBtn) moreBtn.classList.add('hidden')
@@ -1550,18 +1691,19 @@ async function loadHistory(reset) {
   } catch (e) {
     state.history.loading = false
     if (e.message === 'AUTH') { authFailure(); return }
-    if (isAbortError(e) && !loadHistory._retried) {
+    if (isAbortError(e) && !budget.retried) {
       // 超大旧会话冷重放超时: 提示 + 自动重试一次(总预算 2×HISTORY_TIMEOUT), 仍失败走原错误分支
-      loadHistory._retried = true
+      budget.retried = true
       toast(t('history.loadingLarge'), 'warn')
-      return loadHistory(reset)
+      return loadHistory(reset, budget)
     }
-    loadHistory._retried = false
     if (restoreCachedHistory()) {
+      setSessionRecovery('cached', e.message)
       toast(t('history.cacheFallback'), 'ok')
       return
     }
     const msg = e.message || t('err.dshError')
+    setSessionRecovery('error', msg)
     const box = $('history')
     if (box && (reset || !state.history.visible.length)) {
       box.innerHTML = `<div class="empty"><div>${esc(t('history.loadFailed', { msg }))}</div><button type="button" class="mini-btn" id="btn-history-retry" style="margin-top:10px">${esc(t('history.retry'))}</button></div>`
@@ -1572,18 +1714,25 @@ async function loadHistory(reset) {
     }
     return
   }
+  if (state.current !== id) return
 
+  hydrateSessionProjections(id, v.projections)
+  state.history.loaded = true
   const incoming = v.events || []
   if (reset) state.history.partialReasoning.clear()
-  for (const entry of incoming) applyReasoningStreamEvent(entry?.event)
-  const r = HistoryCore.append(state.history.seqs, state.history.visible, incoming, HISTORY_MAX_VISIBLE, ev => shouldShowEvent(ev?.type))
+  for (const entry of incoming) {
+    if (entry?.event?.type === 'turn/start' || entry?.event?.type === 'turn/end') noteSessionTurnTime(id, entry.event)
+    applyReasoningStreamEvent(entry?.event)
+  }
+  const r = HistoryCore.append(state.history.seqs, state.history.visible, incoming, HISTORY_MAX_VISIBLE, ev => shouldShowEvent(ev?.type, ev))
   // 向前翻页游标 = 本页最旧的 raw seq(即使它本身被过滤)
   const firstSeq = incoming[0]?.event?.seq
   if (firstSeq != null) state.history.minSeq = Math.min(state.history.minSeq, firstSeq)
   trimVisible(r.dropped)
   state.history.hasMore = !!v.hasMore
   state.history.loading = false
-  loadHistory._retried = false
+  setSessionRecovery('ready')
+  renderSessionTitle(); renderSessionSub(); renderSessionCards()
   try {
     if (reset) renderHistory(true)
     else if (r.added) renderHistory(false, 'keep')
@@ -1602,7 +1751,7 @@ function insertLiveEvent(event) {
     if (reasoningChanged) scheduleReasoningRender()
     return
   }
-  const r = HistoryCore.append(h.seqs, h.visible, [{ event }], HISTORY_MAX_VISIBLE, ev => shouldShowEvent(ev?.type))
+  const r = HistoryCore.append(h.seqs, h.visible, [{ event }], HISTORY_MAX_VISIBLE, ev => shouldShowEvent(ev?.type, ev))
   if (!r.added) {
     if (reasoningChanged) scheduleReasoningRender()
     return
@@ -1740,9 +1889,24 @@ const INTERESTING_EVENTS = new Set([
   'approval/asked', 'approval/resolved',
   'session/title', 'title'
 ])
-function shouldShowEvent(type) {
-  if (INTERESTING_EVENTS.has(type)) return true
-  return false
+function messageSource(data) {
+  const source = data?.source ?? data?.message?.source
+  return source && typeof source === 'object' ? source : null
+}
+function isHumanUserMessage(event) {
+  if (event?.type !== 'user/message') return false
+  const source = messageSource(event.data || {})
+  // Older DSH events may not carry source metadata; keep those visible for compatibility.
+  return !source || source.kind === 'user'
+}
+function shouldShowEvent(type, event) {
+  if (!INTERESTING_EVENTS.has(type)) return false
+  if (type === 'user/message' && !isHumanUserMessage(event)) {
+    const data = event?.data || {}
+    const blocks = data.message?.content || data.content || []
+    return systemReminderText(blocks).length > 0
+  }
+  return true
 }
 function systemReminderText(blocks) {
   if (!Array.isArray(blocks)) return ''
@@ -1756,7 +1920,7 @@ function eventHtml(entry, ctx = {}) {
   const ev = entry.event || {}
   const data = ev.data || {}
   const type = ev.type || 'event'
-  if (!shouldShowEvent(type)) return ''
+  if (!shouldShowEvent(type, ev)) return ''
   let inner = ''
 
   if (type === 'user/message' || type === 'assistant/message') {
@@ -1766,6 +1930,8 @@ function eventHtml(entry, ctx = {}) {
     const sysText = type === 'user/message' ? systemReminderText(blocks) : ''
     if (sysText) {
       inner = `<details class="event event-detail" data-seq="${seq}"><summary>${esc(t('event.systemReminder'))}</summary><pre>${esc(truncate(sysText, 4000))}</pre></details>`
+    } else if (type === 'user/message' && !isHumanUserMessage(ev)) {
+      return ''
     } else {
       inner = `<div class="msg ${esc(role)}" data-seq="${seq}"><div class="role">${esc(role === 'user' ? t('role.me') : t('role.dsh'))}</div>${blocks.map(blockHtml).join('')}</div>`
     }
@@ -1873,13 +2039,20 @@ async function renderSessionCards() {
   const sub = await safeRpc('subagent.list', { parentSessionId: sessionId })
   if (renderGeneration !== sessionCardsRenderGeneration || state.current !== sessionId) return
   if (sub?.entries?.length) {
+    const expanded = state.subagentExpandedSession === sessionId
+    const toggleLabel = expanded ? t('subagent.collapse') : t('subagent.expand')
     const rows = sub.entries.map(e => {
       if (e.kind === 'diagnostic') return `<div class="card-row"><span class="k">${t('subagent.diagnostic')}</span><span class="v">${esc(e.reason)}</span></div>`
       const label = e.label || short(e.id)
       const running = e.activity === 'running'
       return `<div class="card-row"><span class="k">${running ? '▶ ' : ''}${esc(label)}</span><span class="v">${esc(e.mode)} ${running ? t('subagent.running') : ''}${e.mode === 'continuable' && running ? ` <button class="mini-btn" data-sub-interrupt="${esc(e.id)}">${t('subagent.interrupt')}</button>` : ''}</span></div>`
     }).join('')
-    box.insertAdjacentHTML('beforeend', `<div class="card"><div class="card-title">${t('subagent.title')}</div>${rows}</div>`)
+    const subagentIcon = expanded ? '⌃' : '⌄'
+    box.insertAdjacentHTML('beforeend', `<div class="card subagent-card"><button type="button" class="subagent-toggle" data-subagent-toggle aria-expanded="${expanded}" aria-label="${esc(toggleLabel)}" title="${esc(toggleLabel)}"><span class="card-title">${esc(t('subagent.count', { n: sub.entries.length }))}</span><span class="subagent-toggle-icon" aria-hidden="true">${subagentIcon}</span></button><div class="subagent-list${expanded ? '' : ' hidden'}">${rows}</div></div>`)
+    box.querySelector('[data-subagent-toggle]')?.addEventListener('click', () => {
+      state.subagentExpandedSession = expanded ? '' : sessionId
+      renderSessionCards()
+    })
     box.querySelectorAll('[data-sub-interrupt]').forEach(btn =>
       btn.addEventListener('click', () => interruptSubagent(btn.dataset.subInterrupt)))
   }
@@ -2048,24 +2221,48 @@ async function sendSessionText(text) {
 async function sendSessionContent(text, images) {
   const clean = String(text || '').trim()
   if ((!clean && !images.length) || !state.current) return false
-  if (images.length === 0 && clean && await runSlashCommand(clean)) return true
+  const sessionId = state.current
+  if (images.length === 0 && clean && await runSlashCommand(clean)) {
+    state.sessionActivity.add(sessionId)
+    return true
+  }
   const buttons = [$('btn-send'), $('btn-fs-send')].filter(Boolean)
   buttons.forEach(button => { button.disabled = true })
+  state.pendingPrompts.add(sessionId)
   try {
     const content = [...await encodeComposerImagesFor(images)]
     if (clean) content.push({ type: 'text', text: clean })
+    setSessionRecovery('resuming')
     const v = await safeRpc('session.prompt', {
-      sessionId: state.current,
+      sessionId,
       mode: 'queue',
       content
     }, t('send.failed'))
-    if (v?.accepted) { toast(images.length ? t('send.imageSent') : (clean.startsWith('/') ? t('send.commandSent') : t('send.sent')), 'ok'); return true }
-    if (v?.command?.text) { toast(t('send.commandExecuted'), 'ok'); return true }
+    if (v?.accepted) {
+      state.sessionActivity.add(sessionId)
+      if (state.current === sessionId) {
+        setSessionRecovery('ready')
+        noteSessionTurnTime(sessionId, Date.now())
+        renderSessions()
+        toast(images.length ? t('send.imageSent') : (clean.startsWith('/') ? t('send.commandSent') : t('send.sent')), 'ok')
+      }
+      return true
+    }
+    if (v?.command?.text) {
+      state.sessionActivity.add(sessionId)
+      if (state.current === sessionId) toast(t('send.commandExecuted'), 'ok')
+      return true
+    }
+    if (state.current === sessionId) setSessionRecovery('error')
     return false
   } catch (e) {
-    toast(t('composer.imageReadFailed', { msg: e?.message || e }), 'err')
+    if (state.current === sessionId) {
+      setSessionRecovery('error', e?.message)
+      toast(t('composer.imageReadFailed', { msg: e?.message || e }), 'err')
+    }
     return false
   } finally {
+    state.pendingPrompts.delete(sessionId)
     buttons.forEach(button => { button.disabled = false })
   }
 }
@@ -2224,26 +2421,41 @@ async function cancelSession() {
   if (!state.current) return
   if (!confirm(t('session.confirmStop'))) return
   const v = await safeRpc('session.cancel', { sessionId: state.current }, t('session.stopFailed'))
-  if (v?.accepted) toast(t('session.stopRequested'), 'ok')
+  if (v?.accepted) { setSessionRecovery('ready'); toast(t('session.stopRequested'), 'ok') }
 }
 
-async function newSession() {
-  let payload = {}
-  // DSH 的 host.describe 返回当前工作目录。每次创建前短暂刷新一次，
-  // 避免用户在桌面端切换工作区后，手机仍沿用启动时的旧 cwd。
+let renamePendingSessionId = null
+function renameSession(sessionId = state.current) {
+  const session = state.byId.get(sessionId)
+  if (!session) return
+  renamePendingSessionId = sessionId
+  $('rename-session-input').value = titleOf(session)
+  $('modal-rename').classList.remove('hidden')
+  setTimeout(() => { $('rename-session-input').focus(); $('rename-session-input').select() }, 40)
+}
+function closeRenameSession() {
+  renamePendingSessionId = null
+  $('modal-rename').classList.add('hidden')
+}
+async function confirmRenameSession() {
+  const sessionId = renamePendingSessionId
+  if (!sessionId) return
+  const title = $('rename-session-input').value.trim()
+  if (!title) return toast(t('session.renameEmpty'), 'err')
+  const button = $('rename-confirm')
+  button.disabled = true
+  setSessionRecovery('resuming')
   try {
-    const host = await rpc('host.describe', {}, 5000)
-    const cwd = typeof host?.cwd === 'string' ? host.cwd.trim() : ''
-    if (cwd) {
-      state.hostInfo = host
-      payload = { cwd }
-    }
-  } catch {}
-  const v = await safeRpc('session.create', payload, t('home.createFailed'))
-  if (!v?.sessionId) return
-  toast(t('home.created'), 'ok')
-  await refreshSessions()
-  openSession(v.sessionId)
+    const value = await safeRpc('session.rename', { sessionId, title }, t('session.renameFailed'))
+    if (value == null) { setSessionRecovery('error'); return }
+    if (value.title) applyProjection(sessionId, 'title', value.title, value.seq)
+    closeRenameSession()
+    setSessionRecovery('ready')
+    toast(t('session.renamed'), 'ok')
+    await refreshSessions()
+  } finally {
+    button.disabled = false
+  }
 }
 
 let archivePendingSessionId = null
@@ -2270,9 +2482,29 @@ async function confirmArchiveSession() {
     closeArchiveConfirm()
     toast(t('session.archived'), 'ok')
     await refreshSessions()
+    if (state.current === sessionId) void closeSession()
   } finally {
     button.disabled = false
   }
+}
+
+async function newSession() {
+  let payload = {}
+  // DSH 的 host.describe 返回当前工作目录。每次创建前短暂刷新一次，
+  // 避免用户在桌面端切换工作区后，手机仍沿用启动时的旧 cwd。
+  try {
+    const host = await rpc('host.describe', {}, 5000)
+    const cwd = typeof host?.cwd === 'string' ? host.cwd.trim() : ''
+    if (cwd) {
+      state.hostInfo = host
+      payload = { cwd }
+    }
+  } catch {}
+  const v = await safeRpc('session.create', payload, t('home.createFailed'))
+  if (!v?.sessionId) return
+  toast(t('home.created'), 'ok')
+  await refreshSessions()
+  openSession(v.sessionId)
 }
 
 let swipeTracking = null
@@ -2509,11 +2741,46 @@ async function submitQuestion() {
 }
 
 /* ---------------- 后台任务 ---------------- */
+function queuePreview(item) {
+  const blocks = item?.message?.content || item?.content || []
+  const text = Array.isArray(blocks)
+    ? blocks.filter(block => block?.type === 'text').map(block => String(block.text || '')).join(' ').trim()
+    : ''
+  return text || (Array.isArray(blocks) && blocks.some(block => block?.type === 'image') ? t('queue.image') : '…')
+}
+async function steerQueueItem(itemId) {
+  const sessionId = state.current
+  const key = `${sessionId}:${itemId}`
+  const s = state.byId.get(sessionId)
+  if (!sessionId || !s?.running || state.queueSteering[key]) return
+  state.queueSteering[key] = true
+  renderQueue()
+  try {
+    const v = await safeRpc('session.updateQueue', { sessionId, itemId, action: { kind: 'steer' } }, t('queue.steerFailed', { msg: '' }).replace(/：$/, '').replace(/: $/, ''))
+    if (v?.accepted) toast(t('queue.steerSubmitted'), 'ok')
+  } finally {
+    delete state.queueSteering[key]
+    renderQueue()
+  }
+}
 function renderQueue() {
   const s = state.byId.get(state.current)
   if (!s) return
-  const items = state.queues[state.current] || []
+  const items = (state.queues[state.current] || []).filter(item => item?.placement === 'queued')
+  const box = $('queue-dock')
+  if (box) {
+    box.classList.toggle('hidden', !items.length)
+    box.innerHTML = items.length ? `<div class="queue-dock-head"><span>⌁</span><span>${esc(t('queue.title'))} · ${items.length}</span></div><div class="queue-dock-list">${items.map(item => {
+      const key = `${state.current}:${item.id}`
+      const busy = !!state.queueSteering[key]
+      return `<div class="queue-dock-item"><span class="queue-dock-preview" title="${esc(queuePreview(item))}">${esc(queuePreview(item))}</span><button type="button" class="mini-btn queue-dock-action" data-queue-steer="${esc(item.id)}" title="${esc(s.running ? t('queue.steer') : t('queue.steerUnavailable'))}" ${s.running && !busy ? '' : 'disabled'}>${busy ? '…' : esc(t('queue.steer'))}</button></div>`
+    }).join('')}</div>` : ''
+    box.querySelectorAll('[data-queue-steer]').forEach(button => {
+      button.addEventListener('click', () => steerQueueItem(button.dataset.queueSteer))
+    })
+  }
   updateCancelBtn()
+  updateSessionStatus()
   // 队列数量在会话列表已显示; 详情页不重复大 UI
   $('history-hint').textContent = items.length ? t('history.queueAndCount', { q: items.length, n: state.history.visible.length }) : t('history.countOnly', { n: state.history.visible.length })
   renderSessions()
@@ -2616,7 +2883,7 @@ async function loadLocalVersion() {
  */
 const ANNOUNCEMENTS_KEY = 'seenAnnouncementsV1'
 const ANNOUNCEMENT_HISTORY_KEY = 'announcementHistoryV1'
-const ANNOUNCEMENT_VOTES_KEY = 'announcementVotesV1'
+const ANNOUNCEMENT_SNOOZE_KEY = 'announcementSnoozeV1'
 const ANNOUNCEMENTS_POLL_MS = 30 * 1000
 let announcementCheckPromise = null
 let announcementPollTimer = null
@@ -2637,34 +2904,11 @@ function markAnnouncementSeen(id) {
     for (const key of keys.slice(0, keys.length - 100)) delete seen[key]
   }
   LS.set(ANNOUNCEMENTS_KEY, JSON.stringify(seen))
+  LS.del(ANNOUNCEMENT_SNOOZE_KEY)
   renderAnnouncementBoard()
 }
-function readAnnouncementVotes() {
-  try {
-    const value = JSON.parse(LS.get(ANNOUNCEMENT_VOTES_KEY, '{}'))
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
-  } catch { return {} }
-}
-function announcementVoteKey(announcementId, pollId) {
-  return `${announcementId}\u0000${pollId}`
-}
-function storeAnnouncementVote(announcementId, pollId, optionId) {
-  const votes = readAnnouncementVotes()
-  votes[announcementVoteKey(announcementId, pollId)] = { optionId, votedAt: Date.now() }
-  const keys = Object.keys(votes)
-  if (keys.length > 100) {
-    keys.sort((a, b) => Number(votes[a]?.votedAt || 0) - Number(votes[b]?.votedAt || 0))
-    for (const key of keys.slice(0, keys.length - 100)) delete votes[key]
-  }
-  LS.set(ANNOUNCEMENT_VOTES_KEY, JSON.stringify(votes))
-  renderAnnouncementBoard()
-}
-function announcementVote(item) {
-  if (!item?.poll?.id) return null
-  const saved = readAnnouncementVotes()[announcementVoteKey(item.id, item.poll.id)]
-  if (!saved?.optionId) return null
-  const option = item.poll.options.find(entry => entry.id === saved.optionId)
-  return option ? { ...saved, option } : null
+function readAnnouncementSnooze() {
+  return Date.parse(LS.get(ANNOUNCEMENT_SNOOZE_KEY, '')) || 0
 }
 function readAnnouncementHistory() {
   try {
@@ -2697,15 +2941,12 @@ function renderAnnouncementBoard() {
     return
   }
   box.innerHTML = items.map(item => {
-    const poll = !!item.poll
-    const vote = announcementVote(item)
     const date = Number(item.publishedAt) > 0 ? fmtFullTime(item.publishedAt) : t('announcement.noDate')
-    const action = poll ? (vote ? t('overview.communityVoted') : t('overview.communityVote')) : t('overview.communityView')
-    return `<button class="overview-announcement-card ${poll ? 'poll' : 'notice'}" type="button" data-home-announcement="${esc(item.id)}">
-      <span class="overview-announcement-meta"><span class="overview-announcement-badge">${esc(t(poll ? 'overview.communityPoll' : 'overview.communityNotice'))}</span><span class="overview-announcement-new">${esc(t('overview.communityNew'))}</span><span class="overview-announcement-date">${esc(date)}</span></span>
+    return `<button class="overview-announcement-card notice" type="button" data-home-announcement="${esc(item.id)}">
+      <span class="overview-announcement-meta"><span class="overview-announcement-badge">${esc(t('overview.communityNotice'))}</span><span class="overview-announcement-new">${esc(t('overview.communityNew'))}</span><span class="overview-announcement-date">${esc(date)}</span></span>
       <span class="overview-announcement-title">${esc(item.title)}</span>
       <span class="overview-announcement-copy">${esc(item.content)}</span>
-      <span class="overview-announcement-footer"><span>${esc(action)}</span><span aria-hidden="true">›</span></span>
+      <span class="overview-announcement-footer"><span>${esc(t('overview.communityView'))}</span><span aria-hidden="true">›</span></span>
     </button>`
   }).join('')
 }
@@ -2720,11 +2961,7 @@ function renderAnnouncementHistory() {
   box.innerHTML = list.map(item => {
     const date = Number(item.publishedAt) > 0 ? fmtFullTime(item.publishedAt) : t('announcement.noDate')
     const action = item.actionUrl ? `<a class="announcement-action" href="${esc(item.actionUrl)}" target="_blank" rel="noopener">${esc(item.actionText || t('announcement.open'))}</a>` : ''
-    const vote = announcementVote(item)
-    const pollAction = item.poll ? (vote
-      ? `<div class="announcement-poll-status">${esc(t('announcement.voteThanks', { option: vote.option.label }))}</div>`
-      : `<button class="mini-btn" type="button" data-announcement-poll="${esc(item.id)}">${esc(t('announcement.voteFromHistory'))}</button>`) : ''
-    return `<details class="announcement-history-item"><summary><span>${esc(item.title)}</span><small>${esc(date)}</small></summary><div class="announcement-history-content">${esc(item.content).replace(/\r?\n/g, '<br>')}${action}${pollAction}</div></details>`
+    return `<details class="announcement-history-item"><summary><span>${esc(item.title)}</span><small>${esc(date)}</small></summary><div class="announcement-history-content">${esc(item.content).replace(/\r?\n/g, '<br>')}${action}</div></details>`
   }).join('')
 }
 function openAnnouncementHistory() {
@@ -2742,23 +2979,6 @@ function announcementVersionMatch(item) {
   if (max && cmpVersion(state.localVersion, max) > 0) return false
   return true
 }
-function normalizeAnnouncementPoll(value, announcementId) {
-  if (!value || typeof value !== 'object') return null
-  const id = String(value.id || announcementId || '').trim().slice(0, 120)
-  const question = String(value.question || '').trim().slice(0, 300)
-  if (!id || !question || !Array.isArray(value.options)) return null
-  const seen = new Set()
-  const options = []
-  for (const raw of value.options.slice(0, 8)) {
-    const optionId = String(raw?.id || '').trim().slice(0, 120)
-    const label = String(raw?.label || '').trim().slice(0, 200)
-    if (!optionId || !label || seen.has(optionId)) continue
-    seen.add(optionId)
-    options.push({ id: optionId, label, description: String(raw?.description || '').trim().slice(0, 500) })
-  }
-  return options.length >= 2 ? { id, question, options } : null
-}
-
 function normalizeAnnouncement(item, base) {
   if (!item || typeof item !== 'object') return null
   const id = String(item.id || '').trim().slice(0, 120)
@@ -2782,34 +3002,13 @@ function normalizeAnnouncement(item, base) {
     id, title, content, actionUrl,
     actionText: String(item.actionText || '').trim().slice(0, 80),
     publishedAt: Number.isFinite(startsAt) ? startsAt : 0,
-    force: item.force === true,
-    poll: normalizeAnnouncementPoll(item.poll, id)
+    force: item.force === true
   }
-}
-function renderAnnouncementPoll(item) {
-  const panel = $('announcement-poll')
-  const poll = item?.poll
-  panel.classList.toggle('hidden', !poll)
-  if (!poll) return
-  const vote = announcementVote(item)
-  $('announcement-poll-question').textContent = poll.question
-  $('announcement-poll-options').innerHTML = poll.options.map(option => `
-    <label class="announcement-poll-option">
-      <input type="radio" name="announcement-poll-option" value="${esc(option.id)}"${vote?.optionId === option.id ? ' checked' : ''}${vote ? ' disabled' : ''}>
-      <span><strong>${esc(option.label)}</strong>${option.description ? `<small>${esc(option.description)}</small>` : ''}</span>
-    </label>`).join('')
-  const status = $('announcement-poll-status')
-  status.textContent = vote ? t('announcement.voteThanks', { option: vote.option.label }) : ''
-  status.classList.toggle('hidden', !vote)
-  const submit = $('announcement-poll-submit')
-  submit.classList.toggle('hidden', !!vote)
-  submit.disabled = true
 }
 function openAnnouncementModal(item) {
   state.announcement = item
   $('announcement-title').textContent = item.title
   $('announcement-content').innerHTML = esc(item.content).replace(/\r?\n/g, '<br>')
-  renderAnnouncementPoll(item)
   const action = $('announcement-action')
   if (item.actionUrl) {
     action.href = item.actionUrl
@@ -2824,51 +3023,11 @@ function openAnnouncementModal(item) {
   $('modal-announcement').classList.remove('hidden')
 }
 function closeAnnouncement(markSeen) {
-  if (markSeen && state.announcement) markAnnouncementSeen(state.announcement.id)
+  const item = state.announcement
+  if (markSeen && item) markAnnouncementSeen(item.id)
+  else if (item && !item.force) LS.set(ANNOUNCEMENT_SNOOZE_KEY, new Date(Date.now() + 60 * 60 * 1000).toISOString())
   state.announcement = null
   $('modal-announcement').classList.add('hidden')
-}
-async function submitAnnouncementVote() {
-  const item = state.announcement
-  const poll = item?.poll
-  const optionId = document.querySelector('input[name="announcement-poll-option"]:checked')?.value || ''
-  const option = poll?.options.find(entry => entry.id === optionId)
-  if (!poll || !option) return toast(t('announcement.voteChoose'), 'err')
-  const button = $('announcement-poll-submit')
-  button.disabled = true
-  try {
-    const base = updateBase()
-    if (!base) throw new Error(t('announcement.voteNetworkError'))
-    const res = await fetch(base + '/feedback', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + state.token },
-      body: JSON.stringify({
-        type: 'poll',
-        message: `Poll ${poll.id}: ${option.id}`,
-        announcementId: item.id,
-        pollId: poll.id,
-        optionId: option.id,
-        appVersion: state.localVersion
-      })
-    })
-    const data = await res.json().catch(() => ({}))
-    if (res.ok && data.ok) {
-      storeAnnouncementVote(item.id, poll.id, option.id)
-      markAnnouncementSeen(item.id)
-      renderAnnouncementPoll(item)
-      renderAnnouncementHistory()
-      toast(t('announcement.voteThanks', { option: option.label }), 'ok')
-    } else if (res.status === 429) {
-      toast(t('announcement.voteAgainLater'), 'err')
-      button.disabled = false
-    } else {
-      toast(t('announcement.voteFailed', { msg: data.error || res.status }), 'err')
-      button.disabled = false
-    }
-  } catch (e) {
-    toast(t('announcement.voteFailed', { msg: e.message || t('announcement.voteNetworkError') }), 'err')
-    button.disabled = false
-  }
 }
 async function fetchAnnouncements() {
   const base = updateBase()
@@ -2890,6 +3049,7 @@ async function fetchAnnouncements() {
     const items = normalized.filter(item => !seen[item.id])
       .sort((a, b) => b.publishedAt - a.publishedAt)
     if (!items.length || state.announcement) return false
+    if (!items[0].force && Date.now() < readAnnouncementSnooze()) return false
     openAnnouncementModal(items[0])
     return true
   } catch { return false }
@@ -3199,7 +3359,7 @@ function saveBgConfig(enabled) {
   const b = bgBridge()
   if (!b?.saveBackgroundConfig) return false
   const base = bgBase()
-  const intervalMin = parseFloat($('bg-interval')?.value || '1') || 1
+  const intervalMin = parseFloat($('bg-interval')?.value || '0.5') || 0.5
   const notifyTaskDone = $('opt-task-done')?.checked !== false
   b.saveBackgroundConfig(JSON.stringify({ enabled, intervalMin, base, token: state.token || '', notifyTaskDone }))
   if (enabled) $('bg-auth-status')?.classList.add('hidden')
@@ -3745,19 +3905,24 @@ function bindComposerFullscreenGesture() {
 }
 
 /* ---------------- 初始化 ---------------- */
-/** 解析 dshremote://pair?token=..&server=.. 配对二维码 */
+/** 解析 dshremote://pair?token=..&server=.. 配对二维码；server 可重复以携带多个主机地址。 */
 function applyPairUrl(url) {
   try {
     const u = new URL(String(url).trim())
     if (u.protocol !== 'dshremote:' || u.hostname !== 'pair') return false
     const tok = (u.searchParams.get('token') || '').trim()
-    const server = (u.searchParams.get('server') || '').trim().replace(/\/+$/, '')
-    if (!tok || !/^https?:\/\//i.test(server)) return false
+    const servers = [...new Set(u.searchParams.getAll('server')
+      .map(value => value.trim().replace(/\/+$/, ''))
+      .filter(value => /^https?:\/\//i.test(value)))]
+    if (!tok || !servers.length) return false
     state.token = tok
     LS.set('token', tok)
-    state.server = server
-    if (!state.servers.some(s => s.url === server)) {
-      state.servers.unshift({ id: newServerId(), url: server, note: '', group: state.activeGroup })
+    state.server = servers[0]
+    for (let i = servers.length - 1; i >= 0; i--) {
+      const server = servers[i]
+      if (!state.servers.some(s => s.url === server)) {
+        state.servers.unshift({ id: newServerId(), url: server, note: '', group: state.activeGroup })
+      }
     }
     saveServers()
     renderServers()
@@ -3792,13 +3957,32 @@ async function decodeQrDataUrl(dataUrl) {
   return code?.data || ''
 }
 
-/** App 内扫码: 官方 Camera 拍照/相册 + jsQR 本地解码(无 Google ML Kit/GMS 依赖, 国内可用)。
+/** App 内扫码: 实时摄像头 → 拍照/相册 + jsQR 本地解码(无 Google ML Kit/GMS 依赖, 国内可用)。
  *  冗余路径 1: 系统相机扫 dshremote:// 二维码直接唤起 App(见 bindNativeLinks);
  *  冗余路径 2: 设置页手动粘贴令牌。 */
 async function scanPair(source) {
   if (!CAP?.isNativePlatform?.()) {
     toast(t('scan.browserHint'), 'err')
     return
+  }
+  if (source === 'CAMERA') {
+    try {
+      const liveRaw = await scanPairLive()
+      if (liveRaw !== undefined) {
+        if (!liveRaw) return toast(t('scan.cancelled'), 'ok')
+        if (applyPairUrl(liveRaw)) {
+          toast(t('scan.paired'), 'ok')
+          openStreams()
+          refreshAll()
+        } else {
+          toast(t('scan.notPair'), 'err')
+        }
+        return
+      }
+    } catch (e) {
+      // 实时扫码不可用(权限拒绝/无摄像头/解码器缺失)时回退系统相机拍照路径
+      toast(t('scan.liveUnavailable', { msg: String(e?.message || e || '') }), 'warn')
+    }
   }
   const camera = CAP.Plugins?.Camera
   if (!camera?.getPhoto) { toast(t('scan.unsupported'), 'err'); return }
@@ -3828,6 +4012,186 @@ async function scanPair(source) {
   } catch (e) {
     const msg = String(e?.message || e || '')
     toast(/cancel/i.test(msg) ? t('scan.cancelled') : t('scan.failed', { msg }), 'err')
+  }
+}
+
+/* ---------------- 实时摄像头扫码 ---------------- */
+// getUserMedia 持续取帧 → 优先 BarcodeDetector, 回退 jsQR(Worker 内 loadScript 解码)。
+// 中央 64% 区域取样并缩放至 ≤480px, 降低低端机逐帧二值化负载。
+let liveScanStream = null
+let liveScanTimer = null
+let liveScanResolve = null
+let liveScanCanvas = null
+let liveScanContext = null
+let liveScanCancelled = false
+let liveScanDetector = null
+let liveScanBusy = false
+let liveScanWorker = null
+let liveScanWorkerUrl = ''
+let liveScanWorkerResolve = null
+
+function stopLiveScanWorker() {
+  liveScanWorkerResolve?.('')
+  liveScanWorkerResolve = null
+  liveScanWorker?.terminate()
+  liveScanWorker = null
+  if (liveScanWorkerUrl) URL.revokeObjectURL(liveScanWorkerUrl)
+  liveScanWorkerUrl = ''
+}
+
+function startLiveScanWorker() {
+  if (!window.Worker || !window.Blob || !window.URL?.createObjectURL) return
+  try {
+    const sourceUrl = new URL('jsqr.min.js', document.baseURI).href
+    const workerSource = `
+      let loaded = false
+      self.onmessage = event => {
+        try {
+          if (!loaded) {
+            self.importScripts(${JSON.stringify(sourceUrl)})
+            loaded = true
+          }
+          const { data, width, height } = event.data || {}
+          const code = self.jsQR?.(data, width, height, { inversionAttempts: 'attemptBoth' })
+          self.postMessage({ raw: code?.data || '' })
+        } catch (error) {
+          self.postMessage({ raw: '', error: String(error?.message || error) })
+        }
+      }
+    `
+    liveScanWorkerUrl = URL.createObjectURL(new Blob([workerSource], { type: 'application/javascript' }))
+    liveScanWorker = new Worker(liveScanWorkerUrl)
+    liveScanWorker.onmessage = event => {
+      const resolve = liveScanWorkerResolve
+      liveScanWorkerResolve = null
+      resolve?.(event.data?.raw || '')
+    }
+    liveScanWorker.onerror = () => {
+      const resolve = liveScanWorkerResolve
+      liveScanWorkerResolve = null
+      resolve?.('')
+      stopLiveScanWorker()
+    }
+  } catch {
+    stopLiveScanWorker()
+  }
+}
+
+function closeLiveScan(result = '') {
+  liveScanCancelled = true
+  if (liveScanTimer) clearTimeout(liveScanTimer)
+  liveScanTimer = null
+  if (liveScanStream) liveScanStream.getTracks().forEach(track => track.stop())
+  liveScanStream = null
+  liveScanDetector = null
+  stopLiveScanWorker()
+  const video = $('scan-live-video')
+  if (video) video.srcObject = null
+  $('modal-scan-live')?.classList.add('hidden')
+  const resolve = liveScanResolve
+  liveScanResolve = null
+  resolve?.(result)
+}
+
+async function scanLiveFrame() {
+  if (!liveScanResolve) return
+  const video = $('scan-live-video')
+  if (!video || video.readyState < 2 || !video.videoWidth || !liveScanContext) {
+    liveScanTimer = setTimeout(scanLiveFrame, 180)
+    return
+  }
+  if (liveScanBusy) return
+  liveScanBusy = true
+  try {
+    let raw = ''
+    if (liveScanDetector) {
+      const codes = await liveScanDetector.detect(video)
+      raw = codes?.[0]?.rawValue || ''
+    } else {
+      // 只解码取景框中央区域，避免在低端手机上对整幅高分辨率画面反复二值化。
+      const side = Math.floor(Math.min(video.videoWidth, video.videoHeight) * 0.64)
+      const sx = Math.floor((video.videoWidth - side) / 2)
+      const sy = Math.floor((video.videoHeight - side) / 2)
+      const maxSide = 480
+      const scale = Math.min(1, maxSide / Math.max(1, side))
+      const w = Math.max(1, Math.round(side * scale))
+      const h = w
+      if (liveScanCanvas.width !== w || liveScanCanvas.height !== h) {
+        liveScanCanvas.width = w
+        liveScanCanvas.height = h
+      }
+      liveScanContext.drawImage(video, sx, sy, side, side, 0, 0, w, h)
+      const imageData = liveScanContext.getImageData(0, 0, w, h)
+      if (liveScanWorker) {
+        raw = await new Promise(resolve => {
+          liveScanWorkerResolve = resolve
+          liveScanWorker.postMessage({ data: imageData.data, width: w, height: h }, [imageData.data.buffer])
+        })
+      } else {
+        raw = window.jsQR?.(imageData.data, w, h, { inversionAttempts: 'attemptBoth' })?.data || ''
+      }
+    }
+    if (raw && liveScanResolve) return closeLiveScan(raw)
+  } catch {
+    // 摄像头帧在切后台或权限切换时可能暂时不可读，下一帧继续即可。
+  } finally {
+    liveScanBusy = false
+  }
+  if (liveScanResolve) liveScanTimer = setTimeout(scanLiveFrame, 180)
+}
+
+/** 打开持续取帧的本地摄像头扫码；返回 undefined 表示当前 WebView 不支持实时摄像头。 */
+async function scanPairLive() {
+  if (!navigator.mediaDevices?.getUserMedia) return undefined
+  const video = $('scan-live-video')
+  const modal = $('modal-scan-live')
+  if (!video || !modal || !window.jsQR) return undefined
+  const camera = CAP.Plugins?.Camera
+  const perm = await camera?.requestPermissions?.({ permissions: ['camera'] })
+  if (perm && perm.camera !== 'granted') throw new Error(t('scan.permissionDenied'))
+  liveScanCancelled = false
+  modal.classList.remove('hidden')
+  $('scan-live-status').textContent = t('scan.liveStarting')
+  try {
+    liveScanStream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 960, max: 1280 },
+        height: { ideal: 720, max: 1280 },
+        frameRate: { ideal: 24, max: 30 }
+      }
+    })
+    if (liveScanCancelled) {
+      liveScanStream.getTracks().forEach(track => track.stop())
+      liveScanStream = null
+      return ''
+    }
+    video.srcObject = liveScanStream
+    await video.play()
+    $('scan-live-status').textContent = t('scan.liveHint')
+    try {
+      if (window.BarcodeDetector) {
+        const formats = await window.BarcodeDetector.getSupportedFormats?.()
+        if (!formats || formats.includes('qr_code')) liveScanDetector = new window.BarcodeDetector({ formats: ['qr_code'] })
+      }
+    } catch { liveScanDetector = null }
+    liveScanCanvas = document.createElement('canvas')
+    liveScanContext = liveScanCanvas.getContext('2d', { willReadFrequently: true })
+    if (!liveScanContext) throw new Error(t('scan.decodeUnsupported'))
+    startLiveScanWorker()
+    return await new Promise(resolve => {
+      liveScanResolve = resolve
+      scanLiveFrame()
+    })
+  } catch (e) {
+    closeLiveScan('')
+    throw e
+  } finally {
+    liveScanCanvas = null
+    liveScanContext = null
+    liveScanDetector = null
+    liveScanBusy = false
   }
 }
 
@@ -4220,6 +4584,12 @@ function bindUi() {
     renderSessions()
   })
   $('btn-cancel').addEventListener('click', cancelSession)
+  $('btn-rename-session')?.addEventListener('click', () => renameSession())
+  $('btn-archive-session')?.addEventListener('click', () => archiveSession())
+  $('rename-confirm').addEventListener('click', confirmRenameSession)
+  $('rename-cancel').addEventListener('click', closeRenameSession)
+  $('rename-session-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); confirmRenameSession() } })
+  $('scan-live-cancel')?.addEventListener('click', () => closeLiveScan(''))
   $('btn-send').addEventListener('click', sendMessage)
   $('btn-fs-send').addEventListener('click', sendMessage)
   $('btn-plus').addEventListener('click', toggleComposerMenu)
@@ -4315,19 +4685,9 @@ function bindUi() {
   $('modal-announcement').addEventListener('click', (e) => {
     if (e.target === $('modal-announcement') && !state.announcement?.force) closeAnnouncement(false)
   })
-  $('announcement-poll-submit').addEventListener('click', submitAnnouncementVote)
-  $('announcement-poll-options').addEventListener('change', (e) => {
-    if (e.target?.name === 'announcement-poll-option') $('announcement-poll-submit').disabled = !e.target.checked
-  })
   $('announcement-history-close').addEventListener('click', closeAnnouncementHistory)
   $('modal-announcement-history').addEventListener('click', (e) => {
     if (e.target === $('modal-announcement-history')) closeAnnouncementHistory()
-  })
-  $('announcement-history-list').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-announcement-poll]')
-    if (!btn) return
-    const item = readAnnouncementHistory().find(entry => entry.id === btn.dataset.announcementPoll)
-    if (item) openAnnouncementModal(item)
   })
   $('overview-announcement-history')?.addEventListener('click', openAnnouncementHistory)
   $('overview-announcement-list')?.addEventListener('click', (e) => {
@@ -4372,7 +4732,7 @@ function bindUi() {
   $('btn-update-expand').addEventListener('click', toggleUpdateExpand)
   $('btn-reset').addEventListener('click', () => {
     if (!confirm(t('settings.confirmReset'))) return
-    LS.del('token'); LS.del('notify'); LS.del('server'); LS.del('mobileEnterAction'); LS.del(ANNOUNCEMENTS_KEY); LS.del(ANNOUNCEMENT_HISTORY_KEY)
+    LS.del('token'); LS.del('notify'); LS.del('server'); LS.del('mobileEnterAction'); LS.del(ANNOUNCEMENTS_KEY); LS.del(ANNOUNCEMENT_HISTORY_KEY); LS.del(ANNOUNCEMENT_SNOOZE_KEY)
     if (bgBridge()?.saveBackgroundConfig) saveBgConfig(false)
     location.reload()
   })

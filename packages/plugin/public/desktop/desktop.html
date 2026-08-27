@@ -84,6 +84,9 @@
       <header class="ds-topbar">
         <button id="btn-mobile-nav" class="ds-icon-btn" data-i18n-aria="ds.menu" data-i18n-title="ds.menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
         <div class="ds-title" id="ds-title" data-i18n="ds.sessions">会话</div>
+        <span id="ds-session-status" class="ds-session-status hidden"></span>
+        <button id="btn-rename-session" class="ds-icon-btn hidden" data-i18n-title="session.rename" data-i18n-aria="session.rename">✎</button>
+        <button id="btn-archive-session" class="ds-btn hidden" data-i18n="session.archive">归档</button>
         <div class="ds-top-right">
           <span class="ds-conn" id="conn-badge" title="">●</span>
           <span class="ds-server" id="server-badge"></span>
@@ -145,8 +148,10 @@
         <!-- 会话详情 -->
         <section id="view-chat" class="ds-view">
           <div id="session-cards" class="ds-session-cards"></div>
+          <div id="queue-dock" class="ds-queue-dock hidden" aria-live="polite"></div>
           <div id="history" class="ds-history" aria-live="polite"></div>
           <div class="ds-composer">
+            <div id="composer-status" class="ds-composer-status hidden" role="status" aria-live="polite"><span class="ds-composer-status-dot" aria-hidden="true"></span><span data-i18n="composer.running">运行中…</span></div>
             <textarea id="composer" rows="1" data-i18n-placeholder="ds.composerPlaceholder" placeholder="输入消息…"></textarea>
             <div class="ds-composer-actions">
               <div class="ds-composer-left">
@@ -171,6 +176,7 @@
                 </div>
               </div>
               <div class="ds-composer-right">
+                <button id="btn-cancel" class="ds-btn ds-stop-btn hidden" data-i18n="session.stop">停止本轮</button>
                 <button id="btn-send" class="ds-btn primary ds-send-btn" data-i18n-aria="ds.send" data-i18n-title="ds.send" aria-label="发送">↑</button>
               </div>
             </div>
@@ -294,6 +300,20 @@
       <div class="ds-modal-actions">
         <button id="btn-question-cancel" class="ds-btn" data-i18n="ds.ignore">忽略</button>
         <button id="btn-question-submit" class="ds-btn primary" data-i18n="ds.submit">提交</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 重命名会话模态 -->
+  <div id="modal-rename" class="ds-modal hidden" role="dialog" aria-modal="true" aria-labelledby="rename-session-title">
+    <div class="ds-modal-card">
+      <div id="rename-session-title" class="ds-modal-title" data-i18n="session.renameTitle">重命名会话</div>
+      <div class="ds-modal-body">
+        <input id="rename-session-input" class="ds-text-input" maxlength="160" autocomplete="off" data-i18n-placeholder="session.renamePlaceholder" placeholder="输入新的会话名称">
+      </div>
+      <div class="ds-modal-actions">
+        <button id="rename-cancel" class="ds-btn" data-i18n="ds.cancel">取消</button>
+        <button id="rename-confirm" class="ds-btn primary" data-i18n="session.renameConfirm">保存</button>
       </div>
     </div>
   </div>
@@ -476,6 +496,14 @@
         'models.effortCustomHint': '该模型未声明推理档位，以下为通用三档',
         'ds.blockThinkingLive': '思考中…',
         'menu.modelTitle': '模型切换', 'menu.effortTitle': '思考深度',
+        'composer.running': '运行中…',
+        'session.recovering': '恢复会话中…', 'session.recoveryCached': '正在查看缓存历史', 'session.recoveryFailed': '会话恢复失败',
+        'session.rename': '重命名会话', 'session.renameTitle': '重命名会话', 'session.renamePlaceholder': '输入新的会话名称',
+        'session.renameConfirm': '保存', 'session.renameFailed': '重命名失败', 'session.renameEmpty': '会话名称不能为空', 'session.renamed': '会话名称已更新',
+        'session.archive': '归档', 'session.archiveConfirm': '归档这个会话？归档后可在“显示已归档会话”中打开。', 'session.archived': '会话已归档',
+        'session.stop': '停止本轮', 'session.stopConfirm': '停止当前回合？排队中的消息不会被删除。', 'session.stopFailed': '停止失败', 'session.stopRequested': '已请求停止本轮',
+        'queue.title': '排队消息', 'queue.steer': '插话', 'queue.steerUnavailable': '仅运行中可插话', 'queue.steerSubmitted': '插话请求已提交', 'queue.steerFailed': '插话失败：{msg}', 'queue.image': '图片消息',
+        'subagent.count': '子代理 · {n} 个', 'subagent.expand': '展开子代理', 'subagent.collapse': '收起子代理',
       },
       en: {
         'ds.repo': 'GitHub repo', 'ds.newSession': '+ New session', 'ds.sessions': 'Sessions', 'ds.overview': 'Home', 'ds.overviewEyebrow': 'SYSTEM OVERVIEW', 'ds.overviewSubtitle': 'Live status and items needing your attention',
@@ -578,6 +606,14 @@
         'models.effortCustomHint': 'This model declares no reasoning tiers; using generic low/high/max',
         'ds.blockThinkingLive': 'Thinking…',
         'menu.modelTitle': 'Model', 'menu.effortTitle': 'Reasoning effort',
+        'composer.running': 'Running…',
+        'session.recovering': 'Restoring session…', 'session.recoveryCached': 'Viewing cached history', 'session.recoveryFailed': 'Session restore failed',
+        'session.rename': 'Rename session', 'session.renameTitle': 'Rename session', 'session.renamePlaceholder': 'Enter a new session name',
+        'session.renameConfirm': 'Save', 'session.renameFailed': 'Rename failed', 'session.renameEmpty': 'Session name cannot be empty', 'session.renamed': 'Session name updated',
+        'session.archive': 'Archive', 'session.archiveConfirm': 'Archive this session? You can open it from “Show archived”.', 'session.archived': 'Session archived',
+        'session.stop': 'Stop turn', 'session.stopConfirm': 'Stop the current turn? Queued messages will be kept.', 'session.stopFailed': 'Stop failed', 'session.stopRequested': 'Stop requested',
+        'queue.title': 'Queued messages', 'queue.steer': 'Interject', 'queue.steerUnavailable': 'Only available while running', 'queue.steerSubmitted': 'Interjection requested', 'queue.steerFailed': 'Interjection failed: {msg}', 'queue.image': 'Image message',
+        'subagent.count': 'Subagents · {n}', 'subagent.expand': 'Expand subagents', 'subagent.collapse': 'Collapse subagents',
       }
     }
   </script>

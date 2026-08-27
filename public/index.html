@@ -59,12 +59,16 @@
           <div id="session-title" class="session-title" data-i18n="session.loading">加载中…</div>
           <div id="session-sub" class="session-sub"></div>
         </div>
+        <button id="btn-rename-session" class="icon-btn hidden" data-i18n-title="session.rename" data-i18n-aria="session.rename">✎</button>
+        <button id="btn-archive-session" class="mini-btn hidden" data-i18n="session.archive">归档</button>
         <button id="btn-stats" class="icon-btn" data-i18n-title="stats.title" data-i18n-aria="stats.title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7M3 19h18"/></svg></button>
         <button id="btn-fs-send" class="session-send-btn hidden" type="button" data-i18n="composer.send" data-i18n-title="composer.send" data-i18n-aria="composer.send">发送</button>
         <button id="btn-cancel" class="danger-btn hidden" data-i18n="session.stop">停止</button>
       </div>
 
       <div id="session-cards" class="cards"></div>
+
+      <div id="queue-dock" class="queue-dock hidden" aria-live="polite"></div>
 
       <div class="section-head small">
         <span data-i18n="session.history">对话</span>
@@ -80,6 +84,7 @@
       </div>
 
       <div id="composer-wrap" class="composer-wrap">
+        <div id="composer-status" class="composer-status hidden" role="status" aria-live="polite"><span class="composer-status-dot" aria-hidden="true"></span><span data-i18n="composer.running">运行中…</span></div>
         <div id="composer-menu" class="composer-menu hidden">
           <div class="menu-group">
             <div class="menu-title" data-i18n="menu.commandsTitle">输入指令</div>
@@ -553,6 +558,35 @@
     </div>
   </div>
 
+  <!-- 重命名会话模态 -->
+  <div id="modal-rename" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="rename-session-title">
+    <div class="modal-card">
+      <div id="rename-session-title" class="modal-title" data-i18n="session.renameTitle">重命名会话</div>
+      <div class="modal-body">
+        <input id="rename-session-input" class="text-input" maxlength="160" autocomplete="off" data-i18n-placeholder="session.renamePlaceholder" placeholder="输入新的会话名称">
+      </div>
+      <div class="modal-actions">
+        <button id="rename-cancel" class="btn subtle" data-i18n="session.renameCancel">取消</button>
+        <button id="rename-confirm" class="btn primary" data-i18n="session.renameConfirm">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 实时扫码模态 -->
+  <div id="modal-scan-live" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="scan-live-title">
+    <div class="modal-card scan-live-card">
+      <div id="scan-live-title" class="modal-title" data-i18n="scan.liveTitle">实时扫码连接</div>
+      <div class="scan-live-preview">
+        <video id="scan-live-video" autoplay playsinline muted></video>
+        <div class="scan-live-frame" aria-hidden="true"><span></span></div>
+      </div>
+      <div id="scan-live-status" class="scan-live-status" data-i18n="scan.liveHint">将二维码放入框内，识别后自动连接</div>
+      <div class="modal-actions">
+        <button id="scan-live-cancel" class="btn subtle" data-i18n="scan.liveCancel">取消</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 新建工作区模态（已随文件传输移除：工作区请在 DSH 桌面端创建） -->
   <div id="modal-archive" class="modal hidden" role="dialog" aria-modal="true">
     <div class="modal-card archive-modal-card">
@@ -627,12 +661,6 @@
       <div class="announcement-kicker" data-i18n="announcement.label">公告</div>
       <div id="announcement-title" class="modal-title"></div>
       <div id="announcement-content" class="modal-body announcement-content"></div>
-      <div id="announcement-poll" class="announcement-poll hidden">
-        <div id="announcement-poll-question" class="announcement-poll-question"></div>
-        <div id="announcement-poll-options" class="announcement-poll-options" role="radiogroup"></div>
-        <div id="announcement-poll-status" class="announcement-poll-status hidden"></div>
-        <button id="announcement-poll-submit" class="btn primary" type="button" data-i18n="announcement.voteSubmit">提交投票</button>
-      </div>
       <a id="announcement-action" class="announcement-action hidden" target="_blank" rel="noopener"></a>
       <div class="modal-actions">
         <button id="announcement-later" class="btn subtle" data-i18n="announcement.later">稍后再看</button>
@@ -665,8 +693,8 @@
         'common.refreshing': '刷新中…',
         'nav.sessions': '会话', 'nav.pending': '待办', 'nav.overview': '总览', 'nav.home': '主页', 'nav.stats': '统计', 'nav.settings': '设置',
         'overview.eyebrow': 'SYSTEM OVERVIEW', 'overview.title': '主页', 'overview.subtitle': '实时状态与需要你处理的事项',
-        'overview.communityEyebrow': '公告板', 'overview.communityTitle': '公告与投票', 'overview.communityHistory': '历史公告', 'overview.communityEmpty': '暂无未读公告',
-        'overview.communityPoll': '投票', 'overview.communityNotice': '公告', 'overview.communityNew': '新', 'overview.communityVote': '参与投票', 'overview.communityView': '查看公告', 'overview.communityVoted': '已参与',
+        'overview.communityEyebrow': '公告板', 'overview.communityTitle': '公告', 'overview.communityHistory': '历史公告', 'overview.communityEmpty': '暂无未读公告',
+        'overview.communityNotice': '公告', 'overview.communityNew': '新', 'overview.communityView': '查看公告',
         'overview.systemPulse': '系统链路', 'overview.nominal': '系统链路正常', 'overview.degraded': '部分链路需要关注', 'overview.offline': '连接已断开', 'overview.checking': '检查中…', 'overview.components': '{n}/4 个模块在线', 'overview.live': 'LIVE', 'overview.allLinked': '全部链路', 'overview.offlineCore': 'OFFLINE',
         'overview.gateway': '网关', 'overview.dsh': 'DSH 上游', 'overview.mux': '实时 mux', 'overview.host': '实时 host', 'overview.online': '在线', 'overview.offlineShort': '离线',
         'overview.attention': '需要你处理', 'overview.metrics': '运行指标', 'overview.activity': '近期活动', 'overview.dshVersion': 'DSH 版本', 'overview.gatewayVersion': '网关状态',
@@ -713,8 +741,8 @@
         'groups.confirmDelete': '删除组「{group}」？组内服务器将归入默认组。', 'groups.deleted': '组已删除',
         'stream.error': '事件流错误：{msg}',
         'session.loading': '加载中…', 'session.unknown': '未知会话', 'session.running': '运行中', 'session.interrupted': '已中断',
-        'session.stop': '停止', 'session.history': '对话', 'session.errorMsg': '会话出错：{msg}',
-        'session.confirmStop': '停止当前会话正在运行的任务？', 'session.stopFailed': '停止失败', 'session.stopRequested': '已请求停止', 'session.archive': '归档', 'session.archiveConfirm': '归档这个会话？归档后可在“显示已归档会话”中打开。', 'session.archiveFailed': '归档失败：{msg}', 'session.archived': '会话已归档', 'session.archiveTitle': '确认归档会话', 'session.archiveDesc': '归档后会话将从普通列表隐藏，但不会删除对话记录。', 'session.archiveConversation': '对话', 'session.archiveWorkspace': '工作区', 'session.archiveCancel': '取消', 'session.archiveConfirmAction': '确认归档',
+        'session.stop': '停止本轮', 'session.history': '对话', 'session.errorMsg': '会话出错：{msg}', 'session.recovering': '恢复会话中…', 'session.recoveryFailed': '会话恢复失败', 'session.recoveryCached': '正在查看缓存历史',
+        'session.confirmStop': '停止当前回合？排队中的消息不会被删除。', 'session.stopFailed': '停止失败', 'session.stopRequested': '已请求停止本轮', 'session.archive': '归档', 'session.archiveConfirm': '归档这个会话？归档后可在“显示已归档会话”中打开。', 'session.archiveFailed': '归档失败：{msg}', 'session.archived': '会话已归档', 'session.archiveTitle': '确认归档会话', 'session.archiveDesc': '归档后会话将从普通列表隐藏，但不会删除对话记录。', 'session.archiveConversation': '对话', 'session.archiveWorkspace': '工作区', 'session.archiveCancel': '取消', 'session.archiveConfirmAction': '确认归档', 'session.rename': '重命名会话', 'session.renameTitle': '重命名会话', 'session.renamePlaceholder': '输入新的会话名称', 'session.renameCancel': '取消', 'session.renameConfirm': '保存', 'session.renameEmpty': '会话名称不能为空', 'session.renameFailed': '重命名失败', 'session.renamed': '会话名称已更新', 'queue.title': '排队消息', 'queue.steer': '插话', 'queue.steerUnavailable': '仅运行中可插话', 'queue.steerSubmitted': '插话请求已提交', 'queue.steerFailed': '插话失败：{msg}', 'queue.image': '图片消息',
         'notify.approvalTitle': '工具审批', 'notify.approvalBody': '{tool} 需要批准', 'notify.questionTitle': 'DSH 提问', 'notify.questionBody': '需要你回答',
         'notify.permissionFailed': '通知权限申请失败：{msg}',
         'history.loading': '加载历史…', 'history.loadingLarge': '会话较大，继续加载中…', 'history.cacheFallback': '网络不可用：显示本地缓存的历史', 'history.loadFailed': '加载历史失败：{msg}', 'history.retry': '重试',
@@ -734,7 +762,7 @@
         'goal.actionFailed': '目标操作失败', 'goal.actionSubmitted': '目标操作已提交',
         'goal.cannotEmpty': '目标不能为空', 'goal.updateFailed': '更新失败', 'goal.updated': '目标已更新',
         'todos.title': '任务清单',
-        'subagent.title': '子代理', 'subagent.diagnostic': '诊断项', 'subagent.running': '· 运行中', 'subagent.interrupt': '中断',
+        'subagent.title': '子代理', 'subagent.count': '子代理 · {n} 个', 'subagent.expand': '展开子代理', 'subagent.collapse': '收起子代理', 'subagent.diagnostic': '诊断项', 'subagent.running': '· 运行中', 'subagent.interrupt': '中断',
         'subagent.confirmInterrupt': '中断这个子代理当前回合？', 'subagent.interruptFailed': '中断失败', 'subagent.interruptSubmitted': '中断请求已提交',
         'send.failed': '发送失败', 'send.commandSent': '指令已发送', 'send.sent': '已发送', 'send.imageSent': '图片已发送', 'send.commandExecuted': '命令已执行',
         'models.loading': '模型加载中…', 'models.loadFailed': '模型列表加载失败：{msg}', 'models.unavailable': '不可用', 'models.none': '没有可用模型',
@@ -748,7 +776,7 @@
         'menu.permission': '/permission 切换权限预设', 'menu.plan': '/plan 进入/退出计划模式',
         'perm.readOnly': 'read-only', 'perm.workspaceWrite': 'workspace-write', 'perm.dangerFullAccess': 'danger-full-access',
         'menu.modelTitle': '模型切换', 'menu.refresh': '刷新', 'menu.modelAuto': '点开时自动加载', 'menu.effortTitle': '思考深度',
-        'composer.placeholder': '给 DSH 发消息…', 'composer.send': '发送', 'composer.fullscreen': '全屏编辑', 'composer.exitFullscreen': '退出全屏编辑', 'composer.addImage': '添加图片', 'composer.takePhoto': '拍照', 'composer.choosePhoto': '相册', 'composer.imageAdded': '已添加图片', 'composer.imageRemoved': '已移除图片', 'composer.removeImage': '移除图片', 'composer.imageUnsupported': '仅支持 PNG、JPEG、WebP 或 GIF 图片', 'composer.imageTooLarge': '单张图片不能超过 {size}', 'composer.imageLimit': '最多添加 {count} 张图片', 'composer.imageSlashUnsupported': '带图片时不能发送斜杠命令', 'composer.imageReadFailed': '图片读取失败：{msg}',
+        'composer.placeholder': '给 DSH 发消息…', 'composer.running': '运行中…', 'composer.send': '发送', 'composer.fullscreen': '全屏编辑', 'composer.exitFullscreen': '退出全屏编辑', 'composer.addImage': '添加图片', 'composer.takePhoto': '拍照', 'composer.choosePhoto': '相册', 'composer.imageAdded': '已添加图片', 'composer.imageRemoved': '已移除图片', 'composer.removeImage': '移除图片', 'composer.imageUnsupported': '仅支持 PNG、JPEG、WebP 或 GIF 图片', 'composer.imageTooLarge': '单张图片不能超过 {size}', 'composer.imageLimit': '最多添加 {count} 张图片', 'composer.imageSlashUnsupported': '带图片时不能发送斜杠命令', 'composer.imageReadFailed': '图片读取失败：{msg}',
         'pending.title': '待处理', 'pending.count': '{n} 项', 'pending.approvalTitle': '🔧 {tool} 请求批准', 'pending.noReason': '无说明',
         'pending.allow': '允许', 'pending.reject': '拒绝', 'pending.question': '❓ {question}',
         'pending.questionCount': '共 {n} 个问题', 'pending.answer': '去回答', 'pending.empty': '暂无待处理事项',
@@ -771,7 +799,7 @@
         'scan.permissionDenied': '未授予相机权限',
         'scan.promptHeader': '扫描 DSH Remote 配对二维码', 'scan.promptPhoto': '拍照扫描', 'scan.promptGallery': '从相册选择',
         'scan.noPhoto': '没有拿到图片，请重试', 'scan.noQr': '未识别到二维码，请对准后重试',
-        'scan.paired': '配对成功，正在连接', 'scan.pairedLink': '已通过二维码配对', 'scan.notPair': '这不是 DSH Remote 的配对二维码',
+        'scan.paired': '配对成功，正在连接', 'scan.pairedLink': '已通过二维码配对', 'scan.notPair': '这不是 DSH Remote 的配对二维码', 'scan.liveTitle': '实时扫码连接', 'scan.liveHint': '将二维码放入框内，识别后自动连接', 'scan.liveStarting': '正在打开摄像头…', 'scan.liveCancel': '取消', 'scan.liveUnavailable': '实时扫码不可用：{msg}',
         'scan.cancelled': '已取消扫码', 'scan.failed': '扫码失败：{msg}',
         'settings.groupGeneral': '通用', 'settings.groupGeneralDesc': '显示工具调用、预设提示词',
         'settings.groupServers': '服务器', 'settings.groupServersDesc': '服务器地址、扫码连接',
@@ -845,7 +873,6 @@
         'modal.questionTitle': 'DSH 需要你回答', 'modal.later': '稍后', 'modal.submit': '提交',
         'modal.goalTitle': '目标控制', 'modal.close': '关闭', 'modal.updateGoal': '更新目标',
         'announcement.label': '公告', 'announcement.later': '稍后再看', 'announcement.gotIt': '知道了', 'announcement.open': '查看详情', 'announcement.historyLabel': '公告记录', 'announcement.historyTitle': '历史公告', 'announcement.historyEmpty': '暂无历史公告', 'announcement.close': '关闭', 'announcement.noDate': '未标注日期',
-        'announcement.voteSubmit': '提交投票', 'announcement.voteChoose': '请先选择一项', 'announcement.voteThanks': '已投票：{option}', 'announcement.voteFailed': '投票失败：{msg}', 'announcement.voteNetworkError': '网络错误', 'announcement.voteAgainLater': '提交太频繁，请稍后再试', 'announcement.voteFromHistory': '参与投票',
         'modal.statsTitle': '本轮统计',
         'time.justNow': '刚刚', 'time.minAgo': ' 分钟前', 'time.hourAgo': ' 小时前'
       },
@@ -858,8 +885,8 @@
         'common.refreshing': 'Refreshing…',
         'nav.sessions': 'Sessions', 'nav.pending': 'Inbox', 'nav.overview': 'Overview', 'nav.home': 'Home', 'nav.stats': 'Stats', 'nav.settings': 'Settings',
         'overview.eyebrow': 'SYSTEM OVERVIEW', 'overview.title': 'Home', 'overview.subtitle': 'Live status and items needing your attention',
-        'overview.communityEyebrow': '公告板', 'overview.communityTitle': 'Announcements & polls', 'overview.communityHistory': 'History', 'overview.communityEmpty': 'No unread announcements',
-        'overview.communityPoll': 'Poll', 'overview.communityNotice': 'Notice', 'overview.communityNew': 'New', 'overview.communityVote': 'Vote now', 'overview.communityView': 'View notice', 'overview.communityVoted': 'Voted',
+        'overview.communityEyebrow': '公告板', 'overview.communityTitle': 'Announcements', 'overview.communityHistory': 'History', 'overview.communityEmpty': 'No unread announcements',
+        'overview.communityNotice': 'Notice', 'overview.communityNew': 'New', 'overview.communityView': 'View notice',
         'overview.systemPulse': 'System pulse', 'overview.nominal': 'System nominal', 'overview.degraded': 'Some links need attention', 'overview.offline': 'Connection offline', 'overview.checking': 'Checking…', 'overview.components': '{n}/4 components online', 'overview.live': 'LIVE', 'overview.allLinked': 'ALL LINKED', 'overview.offlineCore': 'OFFLINE',
         'overview.gateway': 'Gateway', 'overview.dsh': 'DSH upstream', 'overview.mux': 'Live mux', 'overview.host': 'Live host', 'overview.online': 'Online', 'overview.offlineShort': 'Offline',
         'overview.attention': 'Needs attention', 'overview.metrics': 'Runtime metrics', 'overview.activity': 'Recent activity', 'overview.dshVersion': 'DSH version', 'overview.gatewayVersion': 'Gateway status',
@@ -906,8 +933,8 @@
         'groups.confirmDelete': 'Delete group "{group}"? Its servers move to the default group.', 'groups.deleted': 'Group deleted',
         'stream.error': 'Event stream error: {msg}',
         'session.loading': 'Loading…', 'session.unknown': 'Unknown session', 'session.running': 'Running', 'session.interrupted': 'Interrupted',
-        'session.stop': 'Stop', 'session.history': 'Conversation', 'session.errorMsg': 'Session error: {msg}',
-        'session.confirmStop': 'Stop the currently running task in this session?', 'session.stopFailed': 'Stop failed', 'session.stopRequested': 'Stop requested', 'session.archive': 'Archive', 'session.archiveConfirm': 'Archive this session? You can open it from “Show archived”.', 'session.archiveFailed': 'Archive failed: {msg}', 'session.archived': 'Session archived', 'session.archiveTitle': 'Confirm archive', 'session.archiveDesc': 'The session will be hidden from the normal list, but its conversation will not be deleted.', 'session.archiveConversation': 'Conversation', 'session.archiveWorkspace': 'Workspace', 'session.archiveCancel': 'Cancel', 'session.archiveConfirmAction': 'Archive session',
+        'session.stop': 'Stop turn', 'session.history': 'Conversation', 'session.errorMsg': 'Session error: {msg}', 'session.recovering': 'Restoring session…', 'session.recoveryFailed': 'Session restore failed', 'session.recoveryCached': 'Viewing cached history',
+        'session.confirmStop': 'Stop the current turn? Queued messages will be kept.', 'session.stopFailed': 'Stop failed', 'session.stopRequested': 'Stop requested', 'session.archive': 'Archive', 'session.archiveConfirm': 'Archive this session? You can open it from “Show archived”.', 'session.archiveFailed': 'Archive failed: {msg}', 'session.archived': 'Session archived', 'session.archiveTitle': 'Confirm archive', 'session.archiveDesc': 'The session will be hidden from the normal list, but its conversation will not be deleted.', 'session.archiveConversation': 'Conversation', 'session.archiveWorkspace': 'Workspace', 'session.archiveCancel': 'Cancel', 'session.archiveConfirmAction': 'Archive session', 'session.rename': 'Rename session', 'session.renameTitle': 'Rename session', 'session.renamePlaceholder': 'Enter a new session name', 'session.renameCancel': 'Cancel', 'session.renameConfirm': 'Save', 'session.renameEmpty': 'Session name cannot be empty', 'session.renameFailed': 'Rename failed', 'session.renamed': 'Session name updated', 'queue.title': 'Queued messages', 'queue.steer': 'Interject', 'queue.steerUnavailable': 'Only available while running', 'queue.steerSubmitted': 'Interjection requested', 'queue.steerFailed': 'Interjection failed: {msg}', 'queue.image': 'Image message',
         'notify.approvalTitle': 'Tool approval', 'notify.approvalBody': '{tool} needs approval', 'notify.questionTitle': 'DSH question', 'notify.questionBody': 'Needs your answer',
         'notify.permissionFailed': 'Notification permission failed: {msg}',
         'history.loading': 'Loading history…', 'history.loadingLarge': 'Large session, still loading…', 'history.cacheFallback': 'Network unavailable: showing cached history', 'history.loadFailed': 'Failed to load history: {msg}', 'history.retry': 'Retry',
@@ -927,7 +954,7 @@
         'goal.actionFailed': 'Goal action failed', 'goal.actionSubmitted': 'Goal action submitted',
         'goal.cannotEmpty': 'Goal cannot be empty', 'goal.updateFailed': 'Update failed', 'goal.updated': 'Goal updated',
         'todos.title': 'Todos',
-        'subagent.title': 'Subagents', 'subagent.diagnostic': 'Diagnostic', 'subagent.running': '· running', 'subagent.interrupt': 'Interrupt',
+        'subagent.title': 'Subagents', 'subagent.count': 'Subagents · {n}', 'subagent.expand': 'Expand subagents', 'subagent.collapse': 'Collapse subagents', 'subagent.diagnostic': 'Diagnostic', 'subagent.running': '· running', 'subagent.interrupt': 'Interrupt',
         'subagent.confirmInterrupt': 'Interrupt this subagent\'s current turn?', 'subagent.interruptFailed': 'Interrupt failed', 'subagent.interruptSubmitted': 'Interrupt requested',
         'send.failed': 'Send failed', 'send.commandSent': 'Command sent', 'send.sent': 'Sent', 'send.imageSent': 'Image sent', 'send.commandExecuted': 'Command executed',
         'models.loading': 'Loading models…', 'models.loadFailed': 'Failed to load models: {msg}', 'models.unavailable': 'unavailable', 'models.none': 'No models available',
@@ -941,7 +968,7 @@
         'menu.permission': '/permission Switch permission preset', 'menu.plan': '/plan Enter/exit plan mode',
         'perm.readOnly': 'read-only', 'perm.workspaceWrite': 'workspace-write', 'perm.dangerFullAccess': 'danger-full-access',
         'menu.modelTitle': 'Model', 'menu.refresh': 'Refresh', 'menu.modelAuto': 'Auto-loads when opened', 'menu.effortTitle': 'Reasoning effort',
-        'composer.placeholder': 'Message DSH…', 'composer.send': 'Send', 'composer.fullscreen': 'Fullscreen editor', 'composer.exitFullscreen': 'Exit fullscreen editor', 'composer.addImage': 'Add image', 'composer.takePhoto': 'Camera', 'composer.choosePhoto': 'Gallery', 'composer.imageAdded': 'Image added', 'composer.imageRemoved': 'Image removed', 'composer.removeImage': 'Remove image', 'composer.imageUnsupported': 'Only PNG, JPEG, WebP or GIF images are supported', 'composer.imageTooLarge': 'Each image must be under {size}', 'composer.imageLimit': 'You can add up to {count} images', 'composer.imageSlashUnsupported': 'Slash commands cannot include images', 'composer.imageReadFailed': 'Could not read image: {msg}',
+        'composer.placeholder': 'Message DSH…', 'composer.running': 'Running…', 'composer.send': 'Send', 'composer.fullscreen': 'Fullscreen editor', 'composer.exitFullscreen': 'Exit fullscreen editor', 'composer.addImage': 'Add image', 'composer.takePhoto': 'Camera', 'composer.choosePhoto': 'Gallery', 'composer.imageAdded': 'Image added', 'composer.imageRemoved': 'Image removed', 'composer.removeImage': 'Remove image', 'composer.imageUnsupported': 'Only PNG, JPEG, WebP or GIF images are supported', 'composer.imageTooLarge': 'Each image must be under {size}', 'composer.imageLimit': 'You can add up to {count} images', 'composer.imageSlashUnsupported': 'Slash commands cannot include images', 'composer.imageReadFailed': 'Could not read image: {msg}',
         'pending.title': 'Inbox', 'pending.count': '{n} items', 'pending.approvalTitle': '🔧 {tool} requests approval', 'pending.noReason': 'No reason given',
         'pending.allow': 'Allow', 'pending.reject': 'Reject', 'pending.question': '❓ {question}',
         'pending.questionCount': '{n} questions', 'pending.answer': 'Answer', 'pending.empty': 'Nothing pending',
@@ -964,7 +991,7 @@
         'scan.permissionDenied': 'Camera permission not granted',
         'scan.promptHeader': 'Scan DSH Remote pairing QR', 'scan.promptPhoto': 'Take photo', 'scan.promptGallery': 'Choose from gallery',
         'scan.noPhoto': 'No image received, try again', 'scan.noQr': 'No QR code detected, aim and try again',
-        'scan.paired': 'Paired, connecting', 'scan.pairedLink': 'Paired via QR code', 'scan.notPair': 'Not a DSH Remote pairing QR code',
+        'scan.paired': 'Paired, connecting', 'scan.pairedLink': 'Paired via QR code', 'scan.notPair': 'Not a DSH Remote pairing QR code', 'scan.liveTitle': 'Live QR scanner', 'scan.liveHint': 'Place the QR code inside the frame to connect automatically', 'scan.liveStarting': 'Opening camera…', 'scan.liveCancel': 'Cancel', 'scan.liveUnavailable': 'Live scanner unavailable: {msg}',
         'scan.cancelled': 'Scan cancelled', 'scan.failed': 'Scan failed: {msg}',
         'settings.groupGeneral': 'General', 'settings.groupGeneralDesc': 'Tool calls, prompt presets',
         'settings.groupServers': 'Servers', 'settings.groupServersDesc': 'Server address, scan to pair',
@@ -1038,7 +1065,6 @@
         'modal.questionTitle': 'DSH needs your answer', 'modal.later': 'Later', 'modal.submit': 'Submit',
         'modal.goalTitle': 'Goal control', 'modal.close': 'Close', 'modal.updateGoal': 'Update goal',
         'announcement.label': 'Announcement', 'announcement.later': 'Later', 'announcement.gotIt': 'Got it', 'announcement.open': 'View details', 'announcement.historyLabel': 'Announcement archive', 'announcement.historyTitle': 'Announcement history', 'announcement.historyEmpty': 'No announcement history', 'announcement.close': 'Close', 'announcement.noDate': 'No date',
-        'announcement.voteSubmit': 'Submit vote', 'announcement.voteChoose': 'Choose an option first', 'announcement.voteThanks': 'Voted: {option}', 'announcement.voteFailed': 'Vote failed: {msg}', 'announcement.voteNetworkError': 'Network error', 'announcement.voteAgainLater': 'Too many submissions; try again later', 'announcement.voteFromHistory': 'Vote now',
         'modal.statsTitle': 'This round',
         'time.justNow': 'just now', 'time.minAgo': ' min ago', 'time.hourAgo': ' hr ago'
       }

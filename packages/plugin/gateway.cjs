@@ -650,6 +650,7 @@ async function runDshControlOperation(operation) {
     dshOperationStep(operation, 'checking', `正在检查 systemd 用户服务 ${DSH_SERVICE}`)
     const initial = await dshServiceStatus()
     operation.initialStatus = initial
+    operation.observed = initial
     if (!initial.supported) {
       failDshOperation(operation, initial.code || 'UNSUPPORTED', initial.message || '当前 DSH 服务不可控', initial.detail, initial)
       return
@@ -683,6 +684,7 @@ async function runDshControlOperation(operation) {
       const status = await dshServiceStatus()
       lastStatus = status
       operation.status = status
+      operation.observed = status
       if (!status.supported) {
         failDshOperation(operation, status.code || 'STATUS_FAILED', status.message || '无法读取 DSH 服务状态', status.detail, status)
         return
@@ -714,6 +716,7 @@ async function runDshControlOperation(operation) {
             dshOperationStep(operation, 'complete', `DSH ${operation.action === 'start' ? '启动' : '重启'}成功：服务已运行，HTTP ${lastProbe.status}，实时通道已连接，PID ${status.mainPid || '未知'}`, {
               ok: true, done: true, code: 'SUCCESS', status, upstream: lastProbe, events,
             })
+            operation.evidence = { observed: status, upstream: lastProbe, events }
             return
           }
         }
@@ -813,6 +816,9 @@ async function serveDshControl(req, res, url) {
   const now = Date.now()
   dshControlOperation = {
     operationId: crypto.randomUUID(), action, service: DSH_SERVICE,
+    desired: { service: DSH_SERVICE, running: true, action },
+    observed: null,
+    evidence: null,
     ok: false, accepted: true, done: false, stage: 'queued', code: 'ACCEPTED',
     message: `已接收 DSH ${action === 'start' ? '启动' : '重启'}请求，等待检查服务`,
     startedAt: now, updatedAt: now, steps: [],
@@ -828,12 +834,16 @@ async function serveDshControl(req, res, url) {
 // 内存环形缓冲并广播给已认证客户端；前端在 WebSocket 被隧道/受限网络
 // 阻断时改走 GET /api/events.poll 增量拉取。
 const EVENT_BUFFER_MAX = durationEnv('GATEWAY_EVENT_BUFFER_MAX', 1000, 100, 10000)
+const EVENT_POLL_WAIT_MAX = durationEnv('GATEWAY_EVENT_POLL_WAIT_MS', 25000, 0, 60000)
 const EVENT_MAX_STRING = 16 * 1024
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 const eventBuffers = { mux: [], host: [] }
 const eventNextSeq = { mux: 1, host: 1 }
 const collectorClients = { mux: new Set(), host: new Set() }
 const collectorReplay = { mux: new Map(), host: new Map() }
+// ponytail: eventPollWaiters 按 kind 无个数上限——自用/鉴权场景下合法客户端数天然受限（连接数≈客户端×通道），
+// 若未来面向不受信网络：按来源 IP 计数限流 + server.maxConnections，超限直接返回空响应不挂起。
+const eventPollWaiters = { mux: new Set(), host: new Set() }
 const eventCollectorState = {
   mux: { connected: false, lastEventAt: 0, lastConnectAt: 0, reconnects: 0, lastError: '', lastCloseCode: 0, lastCloseReason: '', attempt: 0, clients: 0, framesBroadcast: 0, lastBroadcastAt: 0 },
   host: { connected: false, lastEventAt: 0, lastConnectAt: 0, reconnects: 0, lastError: '', lastCloseCode: 0, lastCloseReason: '', attempt: 0, clients: 0, framesBroadcast: 0, lastBroadcastAt: 0 },
@@ -916,6 +926,38 @@ function pushEvent(kind, full, raw = JSON.stringify(full)) {
   if (buf.length > EVENT_BUFFER_MAX) buf.shift()
   rememberCollectorReplay(kind, full, raw)
   broadcastCollectorFrame(kind, raw)
+  flushEventPollWaiters(kind)
+}
+
+function eventPollPayload(kind, since, waitSupported = false) {
+  const buf = eventBuffers[kind]
+  const events = buf.filter(r => r.seq > since)
+  const latestSeq = buf.length ? buf[buf.length - 1].seq : 0
+  const truncated = buf.length > 0 && since < buf[0].seq - 1
+  return { ok: true, kind, since, latestSeq, truncated, waitSupported, events }
+}
+
+function sendEventPollResponse(waiter, payload) {
+  if (waiter.req.destroyed || waiter.res.destroyed) return
+  cors(waiter.res)
+  waiter.res.writeHead(200, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store'
+  })
+  waiter.res.end(JSON.stringify(payload))
+}
+
+function finishEventPollWaiter(waiter, send = true) {
+  if (!eventPollWaiters[waiter.kind]?.delete(waiter)) return
+  clearTimeout(waiter.timer)
+  if (send) sendEventPollResponse(waiter, eventPollPayload(waiter.kind, waiter.since, true))
+}
+
+function flushEventPollWaiters(kind) {
+  for (const waiter of [...eventPollWaiters[kind]]) {
+    const payload = eventPollPayload(kind, waiter.since, true)
+    if (payload.events.length) finishEventPollWaiter(waiter, true)
+  }
 }
 
 function serveWsTicket(req, res, url) {
@@ -973,16 +1015,33 @@ function serveEventPoll(req, res, url) {
     res.end(JSON.stringify({ error: 'bad-since', detail: 'since 必须是非负整数' }))
     return
   }
-  const buf = eventBuffers[kind]
-  const events = buf.filter(r => r.seq > since)
-  const latestSeq = buf.length ? buf[buf.length - 1].seq : 0
-  const truncated = buf.length > 0 && since < buf[0].seq - 1
-  cors(res)
-  res.writeHead(200, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store'
-  })
-  res.end(JSON.stringify({ ok: true, kind, since, latestSeq, truncated, events }))
+  const waitRaw = url.searchParams.get('wait')
+  const requestedWait = waitRaw === null ? 0 : Number(waitRaw)
+  if (!Number.isFinite(requestedWait) || requestedWait < 0) {
+    cors(res)
+    res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' })
+    res.end(JSON.stringify({ error: 'bad-wait', detail: 'wait 必须是非负数字' }))
+    return
+  }
+  const wait = Math.min(Math.floor(requestedWait), EVENT_POLL_WAIT_MAX)
+  const waitSupported = wait > 0 && EVENT_POLL_WAIT_MAX > 0
+  const payload = eventPollPayload(kind, since, waitSupported)
+  if (payload.events.length || wait <= 0 || EVENT_POLL_WAIT_MAX <= 0) {
+    cors(res)
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store'
+    })
+    res.end(JSON.stringify(payload))
+    return
+  }
+  const waiter = { req, res, kind, since, timer: null }
+  eventPollWaiters[kind].add(waiter)
+  waiter.timer = setTimeout(() => finishEventPollWaiter(waiter, true), wait)
+  waiter.timer.unref?.()
+  req.once('close', () => finishEventPollWaiter(waiter, false))
+  // 事件可能刚好在首次检查和加入等待集合之间到达，加入后再检查一次避免漏唤醒。
+  if (eventPollPayload(kind, since, true).events.length) finishEventPollWaiter(waiter, true)
 }
 
 /** 网关自带上游事件采集：mux/host 各一条 WS，断线自动重连。 */
@@ -1902,7 +1961,24 @@ function proxyApi(req, res, url) {
 }
 
 // ---------- 其它 ----------
-async function serveHealth(res) {
+async function serveHealth(req, res, url) {
+  const eventHealth = Object.fromEntries(Object.entries(eventCollectorState).map(([kind, state]) => [kind, {
+    connected: state.connected,
+    lastEventAt: state.lastEventAt,
+    eventLagMs: state.lastEventAt ? Math.max(0, Date.now() - state.lastEventAt) : null,
+    lastConnectAt: state.lastConnectAt,
+    reconnects: state.reconnects,
+    attempt: state.attempt,
+    lastError: state.lastError,
+    clients: state.clients,
+  }]))
+  const liveness = { ok: true, pid: process.pid, uptimeMs: Math.max(0, Date.now() - STARTED_AT), runtime: runtimeState }
+  if (url?.searchParams.get('probe') === 'live') {
+    cors(res)
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ ok: true, service: 'dsh-remote', version: VERSION, probe: 'live', liveness }))
+    return
+  }
   let upstreamOk = false
   let upstreamReachable = false
   let upstreamStatus = 0
@@ -1921,11 +1997,17 @@ async function serveHealth(res) {
   } finally {
     if (timer) clearTimeout(timer)
   }
+  const eventsOk = eventHealth.mux.connected && eventHealth.host.connected
+  const readiness = { ok: upstreamOk && eventsOk, upstreamOk, eventsOk }
+  const status = readiness.ok ? 'ready' : upstreamReachable ? 'degraded' : 'offline'
   cors(res)
   res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
   res.end(JSON.stringify({
     ok: true,
     service: 'dsh-remote',
+    status,
+    liveness,
+    readiness,
     version: VERSION,
     pid: process.pid,
     upstream: UPSTREAM.origin,
@@ -1934,7 +2016,7 @@ async function serveHealth(res) {
     upstreamReachable,
     upstreamStatus,
     ...(upstreamError ? { upstreamError } : {}),
-    events: eventCollectorState,
+    events: eventHealth,
     runtime: runtimeState,
   }))
 }
@@ -2118,7 +2200,7 @@ const server = http.createServer((req, res) => {
     if (url.pathname === '/api/events.poll') return serveEventPoll(req, res, url)
     if (url.pathname.startsWith('/remote/')) return proxyApi(req, res, url)
     if (url.pathname.startsWith('/api/')) return proxyApi(req, res, url)
-    if (url.pathname === '/health') return serveHealth(res)
+    if (url.pathname === '/health') return serveHealth(req, res, url)
     touchDevice(req)
     return serveStatic(req, res, url)
   } catch (err) {
